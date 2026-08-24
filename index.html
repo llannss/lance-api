@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>NVIDIA GPU Finder</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+    <header>
+        <h1>NVIDIA GPU Finder</h1>
+        <p>A website powered by a REST API</p>
+    </header>
+
+    <main>
+
+        <!-- SEARCH -->
+        <section class="search">
+
+            <input
+                type="text"
+                id="searchInput"
+                placeholder="Search for an NVIDIA GPU..."
+            >
+
+            <button onclick="searchGPUs()">
+                Search
+            </button>
+
+            <button class="secondary" onclick="loadGPUs()">
+                Show All
+            </button>
+
+        </section>
+
+
+        <!-- GPU LIST -->
+        <section>
+
+            <h2>NVIDIA GPUs</h2>
+
+            <div id="gpuList" class="gpu-list">
+                Loading GPUs...
+            </div>
+
+        </section>
+
+    </main>
+
+
+    <footer>
+        <p>
+            Data provided by the NVIDIA GPU API
+        </p>
+    </footer>
+    <script src="app.js"></script>
+</body>
+
+</html>
