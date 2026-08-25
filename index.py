@@ -1,11 +1,18 @@
-from fastapi import FastAPI, HTTPException, Header, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+import re
+
 
 app = FastAPI(
     title="Simple NVIDIA GPU API",
-    description="A beginner-friendly REST API containing information about cars.",
+    description="A beginner-friendly REST API containing information about NVIDIA GPUs.",
     version="1.0.0"
 )
+
+
+# =========================================================
+# CORS
+# =========================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -15,7 +22,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# =========================================================
 # GPU DATA
+# =========================================================
+
 gpus = [
     {
         "id": 1,
@@ -69,19 +80,88 @@ gpus = [
     }
 ]
 
+
+# =========================================================
+# SEARCH HELPER
+# =========================================================
+
+def normalize_text(text: str):
+    """
+    Converts:
+        RTX 5090
+        rtx-5090
+        RTX5090
+
+    into:
+        rtx5090
+    """
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def perform_search(query: str):
+    query = query.strip()
+
+    if not query:
+        return []
+
+    normalized_query = normalize_text(query)
+    results = []
+
+    for gpu in gpus:
+
+        searchable_text = " ".join([
+            str(gpu["id"]),
+            gpu["brand"],
+            gpu["model"],
+            gpu["architecture"],
+            gpu["vram"],
+            str(gpu["cuda_cores"]),
+            gpu["memory_bus"],
+            gpu["description"]
+        ])
+
+        normalized_gpu = normalize_text(searchable_text)
+
+        # Full normalized search
+        if normalized_query in normalized_gpu:
+            results.append(gpu)
+            continue
+
+        # Word-by-word search
+        words = query.lower().split()
+
+        if all(
+            normalize_text(word) in normalized_gpu
+            for word in words
+        ):
+            results.append(gpu)
+
+    return results
+
+
+# =========================================================
 # HOME
+# =========================================================
+
 @app.get("/")
 def home():
     return {
         "message": "Welcome to the NVIDIA GPU API!",
-        "endpoints": [
-            "/gpus",
-            "/gpus/{id}",
-            "/gpus/search"
-        ]
+        "version": "1.0.0",
+        "endpoints": {
+            "all_gpus": "/gpus",
+            "search_query": "/gpus/search?q=rtx%205090",
+            "search_path": "/gpus/search/rtx%205090",
+            "gpu_by_id": "/gpus/1",
+            "docs": "/docs"
+        }
     }
 
+
+# =========================================================
 # GET ALL GPUS
+# =========================================================
+
 @app.get("/gpus")
 def get_gpus():
     return {
@@ -90,7 +170,54 @@ def get_gpus():
     }
 
 
-# GET ONE GPU
+# =========================================================
+# SEARCH USING QUERY PARAMETER
+#
+# /gpus/search?q=rtx 5090
+# =========================================================
+
+@app.get("/gpus/search")
+def search_gpus(
+    q: str = Query(
+        ...,
+        min_length=1,
+        description="Example: RTX 5090"
+    )
+):
+    results = perform_search(q)
+
+    return {
+        "query": q,
+        "count": len(results),
+        "results": results
+    }
+
+
+# =========================================================
+# SEARCH USING URL PATH
+#
+# /gpus/search/rtx 5090
+# =========================================================
+
+@app.get("/gpus/search/{query}")
+def search_gpus_path(query: str):
+
+    results = perform_search(query)
+
+    return {
+        "query": query,
+        "count": len(results),
+        "results": results
+    }
+
+
+# =========================================================
+# GET GPU BY ID
+#
+# IMPORTANT:
+# KEEP THIS BELOW THE SEARCH ROUTES
+# =========================================================
+
 @app.get("/gpus/{gpu_id}")
 def get_gpu(gpu_id: int):
 
@@ -100,29 +227,5 @@ def get_gpu(gpu_id: int):
 
     raise HTTPException(
         status_code=404,
-        detail="GPU not found."
+        detail=f"GPU with ID {gpu_id} not found."
     )
-
-# SEARCH GPUS
-@app.get("/gpus/search")
-def search_gpus(q: str = Query(..., min_length=1)):
-    q = q.lower()
-
-    results = []
-
-    for gpu in gpus:
-        searchable_text = (
-            f"{gpu['brand']} "
-            f"{gpu['model']} "
-            f"{gpu['architecture']} "
-            f"{gpu['vram']}"
-        ).lower()
-
-        if q in searchable_text:
-            results.append(gpu)
-
-    return {
-        "query": q,
-        "count": len(results),
-        "results": results
-    }
