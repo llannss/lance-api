@@ -1,9 +1,9 @@
-from fastapi import FastAPI, HTTPException, Header, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="Simple NVIDIA GPU API",
-    description="A beginner-friendly REST API containing information about cars.",
+    description="A beginner-friendly REST API containing NVIDIA GPU information.",
     version="1.0.0"
 )
 
@@ -221,8 +221,17 @@ gpus = [
         "memory_bus": "128-bit",
         "description": "An entry-level Turing GPU designed for affordable 1080p gaming."
     }
+    {
+        "id": 21,
+        "brand": "NVIDIA",
+        "model": "GeForce GTX 1650 SUPER",
+        "architecture": "Turing",
+        "vram": "4GB GDDR6",
+        "cuda_cores": 1280,
+        "memory_bus": "128-bit",
+        "description": "An entry-level Turing GPU designed for affordable 1080p gaming."
+    }
 ]
-
 
 # HOME
 @app.get("/")
