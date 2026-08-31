@@ -315,7 +315,7 @@ function createGpuCard(gpu) {
 
 // Display GPUs
 
-function displayGPUs(gpus) {
+function displayGPUs(gpus, isSearch = false) {
     gpuList.innerHTML = "";
 
     gpuCount.textContent =
@@ -343,7 +343,41 @@ function displayGPUs(gpus) {
         return;
     }
 
+    // Search results
 
+if (isSearch) {
+
+    const searchGrid =
+        document.createElement("div");
+
+    searchGrid.className =
+        "gpu-search-grid";
+
+
+    gpus.forEach((gpu) => {
+
+        const card =
+            createGpuCard(gpu);
+
+        searchGrid.appendChild(card);
+
+    });
+
+
+    gpuList.appendChild(searchGrid);
+
+
+    if (window.animateGpuCards) {
+        window.animateGpuCards();
+    }
+
+    if (window.setupGpuImageHover) {
+        window.setupGpuImageHover();
+    }
+
+
+    return;
+}
     // GPU groups
 
     const groups = {
@@ -805,7 +839,8 @@ async function searchGPUs(query) {
 
 
         displayGPUs(
-            data.results
+            data.results,
+            true
         );
 
 
