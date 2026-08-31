@@ -11,9 +11,7 @@ const backButton = document.getElementById("backButton");
 const brandHome = document.getElementById("brandHome");
 
 
-// ==========================================
 // GPU IMAGE FILE
-// ==========================================
 
 function getImageFile(gpu) {
     const shortModel = gpu.model
@@ -26,9 +24,7 @@ function getImageFile(gpu) {
 }
 
 
-// ==========================================
 // GPU SERIES
-// ==========================================
 
 function getSeries(gpu) {
     const model = gpu.model.toUpperCase();
@@ -53,18 +49,14 @@ function getSeries(gpu) {
 }
 
 
-// ==========================================
 // FORMAT NUMBER
-// ==========================================
 
 function formatNumber(value) {
     return Number(value).toLocaleString();
 }
 
 
-// ==========================================
 // GPU OVERVIEW
-// ==========================================
 
 function buildOverview(gpu) {
     return `
@@ -77,9 +69,7 @@ function buildOverview(gpu) {
 }
 
 
-// ==========================================
 // LOAD ALL GPUS
-// ==========================================
 
 async function loadGPUs() {
     setLoadingState();
@@ -106,9 +96,7 @@ async function loadGPUs() {
 }
 
 
-// ==========================================
 // LOADING STATE
-// ==========================================
 
 function setLoadingState() {
     gpuCount.textContent = "Loading...";
@@ -127,9 +115,7 @@ function setLoadingState() {
 }
 
 
-// ==========================================
 // ERROR STATE
-// ==========================================
 
 function showError(message) {
     gpuCount.textContent = "Unavailable";
@@ -150,9 +136,7 @@ function showError(message) {
 }
 
 
-// ==========================================
 // DISPLAY GPU CARDS
-// ==========================================
 
 function displayGPUs(gpus) {
     gpuList.innerHTML = "";
@@ -493,6 +477,31 @@ function renderDetails(gpu) {
         "specSeries"
     ).textContent =
         series;
+
+    document.getElementById(
+        "specPower"
+    ).textContent =
+    gpu.power ?? "—";
+
+    document.getElementById(
+        "specBaseClock"
+    ).textContent =
+    gpu.base_clock ?? "—";
+
+    document.getElementById(
+        "specBoostClock"
+    ).textContent =
+    gpu.boost_clock ?? "—";
+
+    document.getElementById(
+        "specPsu"
+    ).textContent =
+    gpu.recommended_psu ?? "—";
+
+    document.getElementById(
+        "specReleaseDate"
+    ).textContent =
+    gpu.release_date ?? "—";
 
 
     // OVERVIEW
