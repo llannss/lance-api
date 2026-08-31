@@ -58,7 +58,7 @@ input:focus-visible {
     border: 0;
 }
 
-/* HEADER */
+/* Header */
 .site-header {
     background: #000;
     border-bottom: 1px solid #242424;
@@ -117,7 +117,7 @@ input:focus-visible {
     letter-spacing: 1.4px;
 }
 
-/* HERO */
+/* Hero */
 .hero {
     position: relative;
     overflow: hidden;
@@ -238,7 +238,7 @@ input:focus-visible {
     background: #393939;
 }
 
-/* CATALOG */
+/* Catalog */
 .catalog-section {
     max-width: var(--max-width);
     margin: 0 auto;
@@ -274,10 +274,75 @@ input:focus-visible {
     font-weight: 700;
 }
 
-.gpu-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+/* GPU sections */
+.gpu-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 60px;
+}
+
+.gpu-category {
+    width: 100%;
+}
+
+.gpu-category-header {
+    margin-bottom: 20px;
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.gpu-category-header h2 {
+    font-size: 32px;
+    line-height: 1;
+    letter-spacing: -1px;
+}
+
+.gpu-category-count {
+    flex: 0 0 auto;
+    color: #777;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+/* GPU slider */
+.gpu-slider {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 2px 18px;
+    scroll-behavior: smooth;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: thin;
+    scrollbar-color: #999 #e8e8e8;
+}
+
+.gpu-slider-track {
+    display: flex;
     gap: 22px;
+}
+
+.gpu-slider-track .gpu-card {
+    flex: 0 0 calc((100% - 44px) / 3);
+    scroll-snap-align: start;
+}
+
+.gpu-slider::-webkit-scrollbar {
+    height: 6px;
+}
+
+.gpu-slider::-webkit-scrollbar-track {
+    background: #e8e8e8;
+}
+
+.gpu-slider::-webkit-scrollbar-thumb {
+    background: #999;
+    border-radius: 10px;
+}
+
+.gpu-slider::-webkit-scrollbar-thumb:hover {
+    background: var(--nvidia-green);
 }
 
 .gpu-card {
@@ -287,6 +352,7 @@ input:focus-visible {
     border: 1px solid #d8d8d8;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
     transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
 
@@ -478,7 +544,7 @@ input:focus-visible {
     to { transform: translateX(110%); }
 }
 
-/* FULL IN-PAGE DETAILS */
+/* GPU details */
 .details-view {
     background: white;
 }
@@ -676,7 +742,7 @@ input:focus-visible {
     line-height: 1.75;
 }
 
-/* FOOTER */
+/* Footer */
 .site-footer {
     background: #080808;
     color: #858585;
@@ -698,8 +764,8 @@ input:focus-visible {
 }
 
 @media (max-width: 980px) {
-    .gpu-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    .gpu-slider-track .gpu-card {
+        flex: 0 0 calc((100% - 22px) / 2);
     }
 
     .details-hero-inner {
@@ -754,8 +820,8 @@ input:focus-visible {
         gap: 14px;
     }
 
-    .gpu-grid {
-        grid-template-columns: 1fr;
+    .gpu-slider-track .gpu-card {
+        flex: 0 0 85%;
     }
 
     .gpu-media {
@@ -824,11 +890,323 @@ input:focus-visible {
     }
 }
 
-/* Hide GPU image placeholder now that all images exist */
+/* GPU image fallback */
 #detailsPhotoPlaceholder {
     display: none !important;
 }
 
 #detailsImage {
     display: block !important;
+}
+
+.gpu-bounce {
+    display: inline-block;
+}
+
+/* GPU sections */
+
+.gpu-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 60px;
+}
+
+.gpu-category {
+    width: 100%;
+}
+
+.gpu-category-header {
+    margin-bottom: 20px;
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 20px;
+}
+
+.gpu-category-header h2 {
+    font-size: 32px;
+    line-height: 1;
+    letter-spacing: -1px;
+}
+
+.gpu-slider-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.gpu-category-count {
+    margin-right: 10px;
+    color: #777;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+
+/* Slider buttons */
+
+.slider-button {
+    width: 42px;
+    height: 42px;
+
+    border: 1px solid #d5d5d5;
+    background: white;
+    color: #111;
+
+    cursor: pointer;
+
+    font-size: 20px;
+    font-weight: 700;
+
+    transition:
+        background 160ms ease,
+        color 160ms ease,
+        border-color 160ms ease;
+}
+
+.slider-button:hover {
+    background: var(--nvidia-green);
+    color: white;
+    border-color: var(--nvidia-green);
+}
+
+
+/* GPU slider */
+
+.gpu-slider {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: hidden;
+
+    scroll-behavior: smooth;
+    scroll-snap-type: x mandatory;
+
+    scrollbar-width: none;
+}
+
+.gpu-slider::-webkit-scrollbar {
+    display: none;
+}
+
+.gpu-slider-track {
+    display: flex;
+    gap: 22px;
+}
+
+.gpu-slider-track .gpu-card {
+    flex: 0 0 calc((100% - 44px) / 3);
+    scroll-snap-align: start;
+}
+
+/* Mobile */
+
+@media (max-width: 720px) {
+
+    .header-inner {
+        min-height: 68px;
+        padding: 0 16px;
+    }
+
+    .brand {
+        gap: 12px;
+    }
+
+    .brand-mark {
+        min-width: auto;
+        height: 34px;
+        padding: 0 12px;
+        font-size: 13px;
+    }
+
+    .brand-copy strong {
+        font-size: 14px;
+    }
+
+
+    /* Hero */
+
+    .hero-inner {
+        padding: 52px 18px 46px;
+    }
+
+    .hero h1 {
+        max-width: 100%;
+        font-size: 42px;
+        line-height: 0.98;
+        letter-spacing: -1.8px;
+    }
+
+    .gpu-bounce {
+        display: inline-block;
+    }
+
+    .hero-copy {
+        font-size: 15px;
+        line-height: 1.55;
+    }
+
+    .hero-search {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 30px;
+    }
+
+    .hero-search input,
+    .btn {
+        width: 100%;
+        min-height: 50px;
+    }
+
+
+    /* Catalog */
+
+    .catalog-section {
+        padding: 46px 18px 70px;
+    }
+
+    .section-heading {
+        margin-bottom: 36px;
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+
+    /* GPU category */
+
+    .gpu-sections {
+        gap: 54px;
+    }
+
+    .gpu-category-header {
+        align-items: flex-end;
+        gap: 12px;
+    }
+
+    .gpu-category-header h2 {
+        font-size: 28px;
+    }
+
+    .gpu-category-count {
+        display: none;
+    }
+
+    .gpu-slider-controls {
+        gap: 6px;
+    }
+
+    .slider-button {
+        width: 38px;
+        height: 38px;
+        font-size: 18px;
+    }
+
+
+    /* GPU slider */
+
+    .gpu-slider {
+        width: 100%;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;
+    }
+
+    .gpu-slider::-webkit-scrollbar {
+        display: none;
+    }
+
+    .gpu-slider-track {
+        gap: 14px;
+    }
+
+    .gpu-slider-track .gpu-card {
+        flex: 0 0 88%;
+        width: 88%;
+        min-width: 88%;
+    }
+
+
+    /* GPU card */
+
+    .gpu-media {
+        min-height: 220px;
+    }
+
+    .gpu-card-content {
+        padding: 20px;
+    }
+
+    .gpu-card h3 {
+        font-size: 25px;
+    }
+
+    .gpu-architecture {
+        margin-bottom: 18px;
+    }
+
+    .gpu-specs {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+    }
+
+    .gpu-specs strong {
+        font-size: 11px;
+        overflow-wrap: normal;
+        word-break: normal;
+    }
+
+    .gpu-description {
+        min-height: auto;
+    }
+
+
+    /* Details */
+
+    .details-hero-inner {
+        grid-template-columns: 1fr;
+        padding: 42px 18px;
+        gap: 30px;
+    }
+
+    .details-copy h1 {
+        font-size: 46px;
+        letter-spacing: -2px;
+    }
+
+    .details-media {
+        min-height: 280px;
+    }
+
+    .details-body {
+        padding: 58px 18px 70px;
+    }
+
+    .spec-row {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+}
+
+/* Search results */
+
+.gpu-search-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 22px;
+}
+
+@media (max-width: 980px) {
+
+    .gpu-search-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+}
+
+@media (max-width: 720px) {
+
+    .gpu-search-grid {
+        grid-template-columns: 1fr;
+    }
+
 }
