@@ -11,7 +11,7 @@ const backButton = document.getElementById("backButton");
 const brandHome = document.getElementById("brandHome");
 
 
-// GPU IMAGE FILE
+// GPU image
 
 function getImageFile(gpu) {
     const shortModel = gpu.model
@@ -24,12 +24,10 @@ function getImageFile(gpu) {
 }
 
 
-// GPU SERIES
+// GPU series
 
 function getSeries(gpu) {
-
     const model = gpu.model.toUpperCase();
-
 
     // RTX
 
@@ -45,6 +43,9 @@ function getSeries(gpu) {
         return "GeForce RTX 30 Series";
     }
 
+    if (model.includes("RTX 20")) {
+        return "GeForce RTX 20 Series";
+    }
 
     // GTX
 
@@ -76,7 +77,6 @@ function getSeries(gpu) {
     ) {
         return "GeForce GTX 700 Series";
     }
-
 
     // GT
 
@@ -113,19 +113,18 @@ function getSeries(gpu) {
         return "GeForce GT 400 Series";
     }
 
-
     return "NVIDIA GeForce";
 }
 
 
-// FORMAT NUMBER
+// Format numbers
 
 function formatNumber(value) {
     return Number(value).toLocaleString();
 }
 
 
-// GPU OVERVIEW
+// GPU overview
 
 function buildOverview(gpu) {
     return `
@@ -138,7 +137,7 @@ function buildOverview(gpu) {
 }
 
 
-// LOAD ALL GPUS
+// Load GPUs
 
 async function loadGPUs() {
     setLoadingState();
@@ -165,7 +164,7 @@ async function loadGPUs() {
 }
 
 
-// LOADING STATE
+// Loading state
 
 function setLoadingState() {
     gpuCount.textContent = "Loading...";
@@ -184,7 +183,7 @@ function setLoadingState() {
 }
 
 
-// ERROR STATE
+// Error state
 
 function showError(message) {
     gpuCount.textContent = "Unavailable";
@@ -205,7 +204,123 @@ function showError(message) {
 }
 
 
-// DISPLAY GPU CARDS
+// Create GPU card
+
+function createGpuCard(gpu) {
+    const card = document.createElement("article");
+
+    card.className = "gpu-card";
+
+    const imagePath = getImageFile(gpu);
+    const series = getSeries(gpu);
+
+    card.innerHTML = `
+
+        <div class="gpu-media">
+
+            <div class="gpu-photo-placeholder">
+
+                <span></span>
+
+                <strong>
+                    ${gpu.model}
+                </strong>
+
+                <small>
+                    Image unavailable
+                </small>
+
+            </div>
+
+            <img
+                class="gpu-photo"
+                src="${imagePath}"
+                alt="${gpu.model}"
+                loading="lazy"
+            >
+
+        </div>
+
+
+        <div class="gpu-card-content">
+
+            <span class="gpu-series">
+                ${series}
+            </span>
+
+
+            <h3>
+                ${gpu.model}
+            </h3>
+
+
+            <p class="gpu-architecture">
+                ${gpu.architecture} Architecture
+            </p>
+
+
+            <div class="gpu-specs">
+
+                <div>
+                    <span>VRAM</span>
+
+                    <strong>
+                        ${gpu.vram}
+                    </strong>
+                </div>
+
+
+                <div>
+                    <span>CUDA</span>
+
+                    <strong>
+                        ${formatNumber(gpu.cuda_cores)}
+                    </strong>
+                </div>
+
+
+                <div>
+                    <span>Bus</span>
+
+                    <strong>
+                        ${gpu.memory_bus}
+                    </strong>
+                </div>
+
+            </div>
+
+
+            <p class="gpu-description">
+                ${gpu.description}
+            </p>
+
+
+            <button
+                type="button"
+                class="details-button"
+                data-gpu-id="${gpu.id}"
+            >
+                View Details
+            </button>
+
+        </div>
+    `;
+
+
+    const cardImage =
+        card.querySelector(".gpu-photo");
+
+
+    cardImage.addEventListener("error", () => {
+        cardImage.remove();
+    });
+
+
+    return card;
+}
+
+
+// Display GPUs
 
 function displayGPUs(gpus) {
     gpuList.innerHTML = "";
@@ -214,10 +329,9 @@ function displayGPUs(gpus) {
         `${gpus.length} GPU${gpus.length === 1 ? "" : "s"} found`;
 
 
-    // NO RESULTS
+    // No results
 
     if (gpus.length === 0) {
-
         gpuList.innerHTML = `
             <div class="empty-state">
 
@@ -226,9 +340,8 @@ function displayGPUs(gpus) {
                 </strong>
 
                 <p>
-                    Try a model like RTX 4070,
-                    an architecture like Blackwell,
-                    or a VRAM value like 16GB.
+                    Try RTX 4070, GTX 1080,
+                    GT 1030, Blackwell, or 16GB.
                 </p>
 
             </div>
@@ -238,175 +351,130 @@ function displayGPUs(gpus) {
     }
 
 
-    // CREATE EACH GPU CARD
+    // GPU groups
+
+    const groups = {
+        RTX: [],
+        GTX: [],
+        GT: []
+    };
+
 
     gpus.forEach((gpu) => {
+        const model = gpu.model.toUpperCase();
 
-        const card = document.createElement("article");
+        if (model.includes("RTX")) {
+            groups.RTX.push(gpu);
+        }
 
-        card.className = "gpu-card";
+        else if (model.includes("GTX")) {
+            groups.GTX.push(gpu);
+        }
+
+        else if (model.includes("GT")) {
+            groups.GT.push(gpu);
+        }
+    });
 
 
-        const imagePath = getImageFile(gpu);
+    // Create sections
 
-        const series = getSeries(gpu);
+    Object.entries(groups).forEach(
+        ([category, categoryGPUs]) => {
+
+            if (categoryGPUs.length === 0) {
+                return;
+            }
 
 
-        card.innerHTML = `
+            const section =
+                document.createElement("section");
 
-            <!-- GPU IMAGE -->
 
-            <div class="gpu-media">
+            section.className =
+                "gpu-category";
 
-                <div class="gpu-photo-placeholder">
 
-                    <span>
+            section.innerHTML = `
+
+                <div class="gpu-category-header">
+
+                    <div>
+
+                        <p class="eyebrow green">
+                            GEFORCE
+                        </p>
+
+                        <h2>
+                            ${category}
+                        </h2>
+
+                    </div>
+
+
+                    <span class="gpu-category-count">
+                        ${categoryGPUs.length}
+                        GPU${categoryGPUs.length === 1 ? "" : "s"}
                     </span>
 
-                    <strong>
-                    </strong>
-
-                    <small>
-                    </small>
-
                 </div>
 
 
-                <img
-                    class="gpu-photo"
-                    src="${imagePath}"
-                    alt="${gpu.model}"
-                    loading="lazy"
-                >
+                <div class="gpu-slider">
 
-            </div>
-
-
-            <!-- GPU INFORMATION -->
-
-            <div class="gpu-card-content">
-
-                <span class="gpu-series">
-                    ${series}
-                </span>
-
-
-                <h3>
-                    ${gpu.model}
-                </h3>
-
-
-                <p class="gpu-architecture">
-                    ${gpu.architecture} Architecture
-                </p>
-
-
-                <!-- QUICK SPECS -->
-
-                <div class="gpu-specs">
-
-                    <div>
-
-                        <span>
-                            VRAM
-                        </span>
-
-                        <strong>
-                            ${gpu.vram}
-                        </strong>
-
-                    </div>
-
-
-                    <div>
-
-                        <span>
-                            CUDA
-                        </span>
-
-                        <strong>
-                            ${formatNumber(gpu.cuda_cores)}
-                        </strong>
-
-                    </div>
-
-
-                    <div>
-
-                        <span>
-                            Bus
-                        </span>
-
-                        <strong>
-                            ${gpu.memory_bus}
-                        </strong>
-
+                    <div class="gpu-slider-track">
                     </div>
 
                 </div>
+            `;
 
 
-                <p class="gpu-description">
-                    ${gpu.description}
-                </p>
+            const track =
+                section.querySelector(
+                    ".gpu-slider-track"
+                );
 
 
-                <button
-                    type="button"
-                    class="details-button"
-                    data-gpu-id="${gpu.id}"
-                >
-                    View Details
-                </button>
+            categoryGPUs.forEach((gpu) => {
 
-            </div>
-        `;
+                const card =
+                    createGpuCard(gpu);
+
+                track.appendChild(card);
+
+            });
 
 
-        // IF IMAGE DOES NOT EXIST,
-        // KEEP THE PLACEHOLDER
+            gpuList.appendChild(section);
 
-        const cardImage =
-            card.querySelector(".gpu-photo");
-
-
-        cardImage.addEventListener("error", () => {
-
-            cardImage.remove();
-
-        });
+        }
+    );
 
 
-        gpuList.appendChild(card);
+    // Animations
 
-    });
-}
+    if (window.animateGpuCards) {
+        window.animateGpuCards();
+    }
 
-if (window.animateGpuCards) {
-    window.animateGpuCards();
-}
-
-if (window.setupGpuImageHover) {
-    window.setupGpuImageHover();
+    if (window.setupGpuImageHover) {
+        window.setupGpuImageHover();
+    }
 }
 
 
-// GET ONE GPU
+// Get GPU
 
 async function viewGPU(id) {
-
     try {
-
         const response =
             await fetch(`${API_URL}/gpus/${id}`);
 
 
         if (!response.ok) {
-
             throw new Error(
                 `HTTP ${response.status}`
             );
-
         }
 
 
@@ -417,65 +485,52 @@ async function viewGPU(id) {
         renderDetails(gpu);
 
 
-        // HIDE CATALOG
-
         catalogView.hidden = true;
-
-
-        // SHOW FULL DETAILS PAGE
 
         detailsView.hidden = false;
 
+
         if (window.animateGpuDetails) {
-        window.animateGpuDetails();
+            window.animateGpuDetails();
         }
 
-
-        // SCROLL TO TOP
 
         window.scrollTo({
             top: 0,
             behavior: "smooth"
         });
-
     }
 
     catch (error) {
-
         console.error(error);
-
 
         showError(
             "Unable to retrieve the selected GPU."
         );
-
     }
-
 }
 
 
-// RENDER FULL GPU DETAILS PAGE
+// Render details
 
 function renderDetails(gpu) {
-
     const series =
         getSeries(gpu);
-
 
     const imagePath =
         getImageFile(gpu);
 
 
-    // HERO INFORMATION
-
     document.getElementById(
         "detailsSeries"
-    ).textContent = series;
+    ).textContent =
+        series;
 
 
     document.getElementById(
         "detailsModel"
-    ).textContent = gpu.model;
+    ).textContent =
+        gpu.model;
 
 
     document.getElementById(
@@ -490,8 +545,6 @@ function renderDetails(gpu) {
         gpu.description;
 
 
-    // HERO QUICK SPECS
-
     document.getElementById(
         "detailsVram"
     ).textContent =
@@ -503,8 +556,6 @@ function renderDetails(gpu) {
     ).textContent =
         formatNumber(gpu.cuda_cores);
 
-
-    // IMAGE PLACEHOLDER TEXT
 
     document.getElementById(
         "detailsPlaceholderModel"
@@ -518,7 +569,7 @@ function renderDetails(gpu) {
         `Add ${imagePath}`;
 
 
-    // FULL SPECIFICATION TABLE
+    // Specifications
 
     document.getElementById(
         "specModel"
@@ -555,33 +606,36 @@ function renderDetails(gpu) {
     ).textContent =
         series;
 
+
     document.getElementById(
         "specPower"
     ).textContent =
-    gpu.power ?? "—";
+        gpu.power ?? "—";
+
 
     document.getElementById(
         "specBaseClock"
     ).textContent =
-    gpu.base_clock ?? "—";
+        gpu.base_clock ?? "—";
+
 
     document.getElementById(
         "specBoostClock"
     ).textContent =
-    gpu.boost_clock ?? "—";
+        gpu.boost_clock ?? "—";
+
 
     document.getElementById(
         "specPsu"
     ).textContent =
-    gpu.recommended_psu ?? "—";
+        gpu.recommended_psu ?? "—";
+
 
     document.getElementById(
         "specReleaseDate"
     ).textContent =
-    gpu.release_date ?? "—";
+        gpu.release_date ?? "—";
 
-
-    // OVERVIEW
 
     document.getElementById(
         "detailsOverview"
@@ -589,7 +643,7 @@ function renderDetails(gpu) {
         buildOverview(gpu);
 
 
-    // GPU IMAGE
+    // GPU image
 
     const detailsImage =
         document.getElementById(
@@ -603,36 +657,23 @@ function renderDetails(gpu) {
         );
 
 
-    // DEFAULT TO PLACEHOLDER
-
     detailsImage.hidden = true;
 
     placeholder.hidden = false;
-
 
     detailsImage.alt =
         gpu.model;
 
 
-    // IMAGE SUCCESSFULLY LOADED
-
     detailsImage.onload = () => {
-
         detailsImage.hidden = false;
-
         placeholder.hidden = true;
-
     };
 
 
-    // IMAGE DOES NOT EXIST
-
     detailsImage.onerror = () => {
-
         detailsImage.hidden = true;
-
         placeholder.hidden = false;
-
     };
 
 
@@ -640,17 +681,14 @@ function renderDetails(gpu) {
         imagePath;
 
 
-    // CHANGE PAGE TITLE
-
     document.title =
         `${gpu.model} | NVIDIA GPU Finder`;
 }
 
 
-// BACK TO GPU CATALOG
+// Back to catalog
 
 function showCatalog() {
-
     detailsView.hidden = true;
 
     catalogView.hidden = false;
@@ -664,26 +702,19 @@ function showCatalog() {
         top: 0,
         behavior: "smooth"
     });
-
 }
 
 
-// SEARCH GPUS
+// Search GPUs
 
 async function searchGPUs(query) {
-
     const cleanQuery =
         query.trim();
 
 
-    // EMPTY SEARCH = SHOW ALL
-
     if (!cleanQuery) {
-
         await loadGPUs();
-
         return;
-
     }
 
 
@@ -691,7 +722,6 @@ async function searchGPUs(query) {
 
 
     try {
-
         const response =
             await fetch(
                 `${API_URL}/gpus/search?q=${encodeURIComponent(cleanQuery)}`
@@ -699,11 +729,9 @@ async function searchGPUs(query) {
 
 
         if (!response.ok) {
-
             throw new Error(
                 `HTTP ${response.status}`
             );
-
         }
 
 
@@ -716,32 +744,25 @@ async function searchGPUs(query) {
         );
 
 
-        // SCROLL TO GPU RESULTS
-
         document
             .getElementById("catalogSection")
             .scrollIntoView({
                 behavior: "smooth",
                 block: "start"
             });
-
     }
 
     catch (error) {
-
         console.error(error);
-
 
         showError(
             "GPU search failed. Please try again."
         );
-
     }
-
 }
 
 
-// VIEW DETAILS BUTTON
+// View details button
 
 gpuList.addEventListener(
     "click",
@@ -766,14 +787,13 @@ gpuList.addEventListener(
 );
 
 
-// SEARCH FORM
+// Search form
 
 searchForm.addEventListener(
     "submit",
     (event) => {
 
         event.preventDefault();
-
 
         searchGPUs(
             searchInput.value
@@ -783,7 +803,7 @@ searchForm.addEventListener(
 );
 
 
-// SHOW ALL BUTTON
+// Show all
 
 showAllButton.addEventListener(
     "click",
@@ -797,7 +817,7 @@ showAllButton.addEventListener(
 );
 
 
-// BACK BUTTON
+// Back button
 
 backButton.addEventListener(
     "click",
@@ -805,7 +825,7 @@ backButton.addEventListener(
 );
 
 
-// NVIDIA LOGO / HOME BUTTON
+// NVIDIA logo
 
 brandHome.addEventListener(
     "click",
@@ -819,7 +839,6 @@ brandHome.addEventListener(
 );
 
 
-
-// INITIAL LOAD
+// Initial load
 
 loadGPUs();
