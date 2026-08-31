@@ -222,13 +222,6 @@ function createGpuCard(gpu) {
 
                 <span></span>
 
-                <strong>
-                    ${gpu.model}
-                </strong>
-
-                <small>
-                    Image unavailable
-                </small>
 
             </div>
 
@@ -439,43 +432,83 @@ function displayGPUs(gpus) {
             const track =
     section.querySelector(".gpu-slider-track");
 
-    const slider =
-    section.querySelector(".gpu-slider");
+            const slider =
+                section.querySelector(".gpu-slider");
 
-const prevButton =
-    section.querySelector(".slider-prev");
+            const prevButton =
+                section.querySelector(".slider-prev");
 
-const nextButton =
-    section.querySelector(".slider-next");
+            const nextButton =
+                section.querySelector(".slider-next");
 
+            let currentIndex = 0;
+
+
+            function goToCard(index) {
+
+                const cards =
+                    track.querySelectorAll(".gpu-card");
+
+                if (!cards.length) return;
+
+
+                currentIndex = Math.max(
+                    0,
+                    Math.min(index, cards.length - 1)
+                );
+
+
+                const card = cards[currentIndex];
+
+
+                slider.scrollTo({
+                    left: card.offsetLeft,
+                    behavior: "smooth"
+                });
+            }
+
+
+// Previous
 
 prevButton.addEventListener("click", () => {
 
-    slider.scrollBy({
-        left: -slider.clientWidth,
-        behavior: "smooth"
-    });
+    goToCard(currentIndex - 1);
 
 });
 
 
-            categoryGPUs.forEach((gpu) => {
+// Next
 
-                const card =
-                    createGpuCard(gpu);
+nextButton.addEventListener("click", () => {
 
-                track.appendChild(card);
+    goToCard(currentIndex + 1);
 
-            });
+});
 
 
-            gpuList.appendChild(section);
+// Create GPU cards
 
-        }
-    );
+categoryGPUs.forEach((gpu) => {
+
+    const card =
+        createGpuCard(gpu);
+
+    track.appendChild(card);
+
+});
+
+
+gpuList.appendChild(section);
+
+            }
+        );
 
 
     // Animations
+
+    if (window.animateGpuCategories) {
+        window.animateGpuCategories();
+    }
 
     if (window.animateGpuCards) {
         window.animateGpuCards();
@@ -483,6 +516,10 @@ prevButton.addEventListener("click", () => {
 
     if (window.setupGpuImageHover) {
         window.setupGpuImageHover();
+    }
+
+    if (window.setupSliderButtonAnimations) {
+        window.setupSliderButtonAnimations();
     }
 }
 
@@ -515,7 +552,7 @@ async function viewGPU(id) {
 
 
         if (window.animateGpuDetails) {
-            window.animateGpuDetails();
+        window.animateGpuDetails(gpu);
         }
 
 
@@ -742,7 +779,6 @@ async function searchGPUs(query) {
     }
 
 
-    setLoadingState();
 
 
     try {
@@ -763,9 +799,19 @@ async function searchGPUs(query) {
             await response.json();
 
 
+        if (window.animateSearchOut) {
+            await window.animateSearchOut();
+        }
+
+
         displayGPUs(
             data.results
         );
+
+
+        if (window.animateSearchIn) {
+            window.animateSearchIn();
+        }
 
 
         document
