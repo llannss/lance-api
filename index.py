@@ -321,21 +321,6 @@ gpus = [
         "release_date": "November 22, 2019",
         "description": "An entry-level Turing GPU designed for affordable 1080p gaming."
     },
-    {
-        "id": 21,
-        "brand": "NVIDIA",
-        "model": "GeForce GTX 1650 SUPER",
-        "architecture": "Turing",
-        "vram": "4GB GDDR6",
-        "cuda_cores": 1280,
-        "memory_bus": "128-bit",
-        "power": "100W",
-        "base_clock": "1.53 GHz",
-        "boost_clock": "1.725 GHz",
-        "recommended_psu": "350W",
-        "release_date": "November 22, 2019",
-        "description": "An entry-level Turing GPU designed for affordable 1080p gaming."
-    },
 ]
 
 # HOME
