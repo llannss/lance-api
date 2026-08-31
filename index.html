@@ -24,7 +24,7 @@
             <section class="hero">
                 <div class="hero-inner">
                     <p class="eyebrow">GEFORCE GRAPHICS</p>
-                    <h1>Find the NVIDIA GPU<br>that fits your build.</h1>
+                    <h1 class="nvidia">Find the <span class="gpu-bounce">NVIDIA GPU</span><br>that fits your build.</h1>
                     <p class="hero-copy">
                         Browse GeForce RTX and GTX graphics cards by architecture,
                         VRAM, CUDA core count, and memory bus.
@@ -54,7 +54,7 @@
                     <div class="result-count" id="gpuCount" aria-live="polite"></div>
                 </div>
 
-                <div id="gpuList" class="gpu-grid" aria-live="polite">
+                <div id="gpuList" class="gpu-sections" aria-live="polite">
                     <div class="loading-state">
                         <div class="loading-bar"></div>
                         <p>Loading NVIDIA GPUs...</p>
@@ -132,6 +132,26 @@
                         <span>Series</span>
                         <strong id="specSeries">—</strong>
                     </div>
+                    <div class="spec-row">
+                    <span>Power</span>
+                    <strong id="specPower">—</strong>
+                    </div>
+                    <div class="spec-row">
+                        <span>Base Clock</span>
+                        <strong id="specBaseClock">—</strong>
+                    </div>
+                    <div class="spec-row">
+                        <span>Boost Clock</span>
+                        <strong id="specBoostClock">—</strong>
+                    </div>
+                    <div class="spec-row">
+                        <span>Recommended PSU</span>
+                        <strong id="specPsu">—</strong>
+                    </div>
+                    <div class="spec-row">
+                        <span>Release Date</span>
+                        <strong id="specReleaseDate">—</strong>
+                    </div>
                 </div>
 
                 <div class="about-card">
@@ -148,7 +168,7 @@
             <strong>NVIDIA GPU Finder</strong>
         </div>
     </footer>
-
     <script src="app.js"></script>
+    <script type="module" src="animations.js"></script>
 </body>
 </html>
