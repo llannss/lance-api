@@ -27,7 +27,11 @@ function getImageFile(gpu) {
 // GPU SERIES
 
 function getSeries(gpu) {
+
     const model = gpu.model.toUpperCase();
+
+
+    // RTX
 
     if (model.includes("RTX 50")) {
         return "GeForce RTX 50 Series";
@@ -41,9 +45,74 @@ function getSeries(gpu) {
         return "GeForce RTX 30 Series";
     }
 
+
+    // GTX
+
     if (model.includes("GTX 16")) {
         return "GeForce GTX 16 Series";
     }
+
+    if (
+        model.includes("GTX 1080") ||
+        model.includes("GTX 1070") ||
+        model.includes("GTX 1060") ||
+        model.includes("GTX 1050")
+    ) {
+        return "GeForce GTX 10 Series";
+    }
+
+    if (
+        model.includes("GTX 980") ||
+        model.includes("GTX 970") ||
+        model.includes("GTX 960")
+    ) {
+        return "GeForce GTX 900 Series";
+    }
+
+    if (
+        model.includes("GTX 780") ||
+        model.includes("GTX 770") ||
+        model.includes("GTX 760")
+    ) {
+        return "GeForce GTX 700 Series";
+    }
+
+
+    // GT
+
+    if (
+        model.includes("GT 1030") ||
+        model.includes("GT 1010")
+    ) {
+        return "GeForce GT 10 Series";
+    }
+
+    if (
+        model.includes("GT 740") ||
+        model.includes("GT 730") ||
+        model.includes("GT 720") ||
+        model.includes("GT 710")
+    ) {
+        return "GeForce GT 700 Series";
+    }
+
+    if (
+        model.includes("GT 640") ||
+        model.includes("GT 630") ||
+        model.includes("GT 620") ||
+        model.includes("GT 610")
+    ) {
+        return "GeForce GT 600 Series";
+    }
+
+    if (model.includes("GT 520")) {
+        return "GeForce GT 500 Series";
+    }
+
+    if (model.includes("GT 430")) {
+        return "GeForce GT 400 Series";
+    }
+
 
     return "NVIDIA GeForce";
 }
@@ -313,10 +382,16 @@ function displayGPUs(gpus) {
     });
 }
 
+if (window.animateGpuCards) {
+    window.animateGpuCards();
+}
 
-// ==========================================
+if (window.setupGpuImageHover) {
+    window.setupGpuImageHover();
+}
+
+
 // GET ONE GPU
-// ==========================================
 
 async function viewGPU(id) {
 
@@ -351,6 +426,10 @@ async function viewGPU(id) {
 
         detailsView.hidden = false;
 
+        if (window.animateGpuDetails) {
+        window.animateGpuDetails();
+        }
+
 
         // SCROLL TO TOP
 
@@ -375,9 +454,7 @@ async function viewGPU(id) {
 }
 
 
-// ==========================================
 // RENDER FULL GPU DETAILS PAGE
-// ==========================================
 
 function renderDetails(gpu) {
 
@@ -512,9 +589,7 @@ function renderDetails(gpu) {
         buildOverview(gpu);
 
 
-    // ======================================
     // GPU IMAGE
-    // ======================================
 
     const detailsImage =
         document.getElementById(
@@ -572,9 +647,7 @@ function renderDetails(gpu) {
 }
 
 
-// ==========================================
 // BACK TO GPU CATALOG
-// ==========================================
 
 function showCatalog() {
 
@@ -595,9 +668,7 @@ function showCatalog() {
 }
 
 
-// ==========================================
 // SEARCH GPUS
-// ==========================================
 
 async function searchGPUs(query) {
 
@@ -670,9 +741,7 @@ async function searchGPUs(query) {
 }
 
 
-// ==========================================
 // VIEW DETAILS BUTTON
-// ==========================================
 
 gpuList.addEventListener(
     "click",
@@ -697,9 +766,7 @@ gpuList.addEventListener(
 );
 
 
-// ==========================================
 // SEARCH FORM
-// ==========================================
 
 searchForm.addEventListener(
     "submit",
@@ -716,9 +783,7 @@ searchForm.addEventListener(
 );
 
 
-// ==========================================
 // SHOW ALL BUTTON
-// ==========================================
 
 showAllButton.addEventListener(
     "click",
@@ -732,9 +797,7 @@ showAllButton.addEventListener(
 );
 
 
-// ==========================================
 // BACK BUTTON
-// ==========================================
 
 backButton.addEventListener(
     "click",
@@ -742,9 +805,7 @@ backButton.addEventListener(
 );
 
 
-// ==========================================
 // NVIDIA LOGO / HOME BUTTON
-// ==========================================
 
 brandHome.addEventListener(
     "click",
@@ -758,8 +819,7 @@ brandHome.addEventListener(
 );
 
 
-// ==========================================
+
 // INITIAL LOAD
-// ==========================================
 
 loadGPUs();
