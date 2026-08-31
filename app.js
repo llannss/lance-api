@@ -396,43 +396,67 @@ function displayGPUs(gpus) {
 
 
             section.innerHTML = `
+    <div class="gpu-category-header">
 
-                <div class="gpu-category-header">
+        <div>
+            <p class="eyebrow green">GEFORCE</p>
+            <h2>${category}</h2>
+        </div>
 
-                    <div>
+        <div class="gpu-slider-controls">
 
-                        <p class="eyebrow green">
-                            GEFORCE
-                        </p>
+            <span class="gpu-category-count">
+                ${categoryGPUs.length}
+                GPU${categoryGPUs.length === 1 ? "" : "s"}
+            </span>
 
-                        <h2>
-                            ${category}
-                        </h2>
+            <button
+                type="button"
+                class="slider-button slider-prev"
+                aria-label="Previous GPUs"
+            >
+                ←
+            </button>
 
-                    </div>
+            <button
+                type="button"
+                class="slider-button slider-next"
+                aria-label="Next GPUs"
+            >
+                →
+            </button>
 
+        </div>
 
-                    <span class="gpu-category-count">
-                        ${categoryGPUs.length}
-                        GPU${categoryGPUs.length === 1 ? "" : "s"}
-                    </span>
+    </div>
 
-                </div>
-
-
-                <div class="gpu-slider">
-
-                    <div class="gpu-slider-track">
-                    </div>
-
-                </div>
-            `;
+    <div class="gpu-slider">
+        <div class="gpu-slider-track"></div>
+    </div>
+`;
 
 
             const track =
-                section.querySelector(
-                    ".gpu-slider-track"
-                );
+    section.querySelector(".gpu-slider-track");
+
+    const slider =
+    section.querySelector(".gpu-slider");
+
+const prevButton =
+    section.querySelector(".slider-prev");
+
+const nextButton =
+    section.querySelector(".slider-next");
+
+
+prevButton.addEventListener("click", () => {
+
+    slider.scrollBy({
+        left: -slider.clientWidth,
+        behavior: "smooth"
+    });
+
+});
 
 
             categoryGPUs.forEach((gpu) => {
