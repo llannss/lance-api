@@ -28,6 +28,10 @@ function getImageFile(gpu) {
 // GPU series
 
 function getSeries(gpu) {
+    if (typeof gpu.series === "string" && gpu.series.trim()) {
+        return gpu.series;
+    }
+
     const model = gpu.model.toUpperCase();
 
     // RTX
@@ -121,20 +125,49 @@ function getSeries(gpu) {
 // Format numbers
 
 function formatNumber(value) {
-    return Number(value).toLocaleString();
+    if (value === null || value === undefined || value === "") {
+        return "Not available";
+    }
+
+    const number = Number(value);
+    return Number.isFinite(number)
+        ? number.toLocaleString("en-US", { maximumFractionDigits: 2 })
+        : "Not available";
+}
+
+function formatMeasurement(value, unit) {
+    const formatted = formatNumber(value);
+    return formatted === "Not available" ? formatted : `${formatted} ${unit}`;
+}
+
+function formatLaunchPrice(gpu) {
+    if (gpu.launch_price_usd === null) {
+        return "Not publicly documented";
+    }
+
+    if (gpu.launch_price_usd === undefined || gpu.launch_price_usd === "") {
+        return gpu.launch_price || "Not available";
+    }
+
+    const price = Number(gpu.launch_price_usd);
+    if (!Number.isFinite(price) || price < 0) {
+        return "Not available";
+    }
+
+    return new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD"
+    }).format(price);
 }
 
 
 // GPU overview
 
 function buildOverview(gpu) {
-    return `
-        ${gpu.description}
-        It is based on NVIDIA's ${gpu.architecture} architecture
-        and includes ${formatNumber(gpu.cuda_cores)} CUDA cores,
-        ${gpu.vram} of video memory, and a
-        ${gpu.memory_bus} memory interface.
-    `;
+    // Display the description written in the API data, including its line breaks.
+    return typeof gpu.description === "string" && gpu.description.trim()
+        ? gpu.description
+        : "No description provided.";
 }
 
 
@@ -288,9 +321,7 @@ function createGpuCard(gpu) {
             </div>
 
 
-            <p class="gpu-description">
-                ${gpu.description}
-            </p>
+            <p class="gpu-description"></p>
 
 
             <button
@@ -304,6 +335,8 @@ function createGpuCard(gpu) {
         </div>
     `;
 
+
+    card.querySelector(".gpu-description").textContent = buildOverview(gpu);
 
     const cardImage =
         card.querySelector(".gpu-photo");
@@ -617,133 +650,53 @@ async function viewGPU(id) {
 // Render details
 
 function renderDetails(gpu) {
-    const series =
-        getSeries(gpu);
+    const series = getSeries(gpu);
+    const imagePath = getImageFile(gpu);
+    const description = buildOverview(gpu);
 
-    const imagePath =
-        getImageFile(gpu);
+    const detailValues = {
+        detailsSeries: series,
+        detailsModel: gpu.model,
+        detailsArchitecture: `${gpu.architecture} Architecture`,
+        detailsDescription: description,
+        detailsVram: gpu.vram,
+        detailsCuda: formatNumber(gpu.cuda_cores),
+        detailsPlaceholderModel: gpu.model,
+        detailsImageHint: `Add ${imagePath}`,
+        detailsOverview: description
+    };
 
+    // Each row reads the saved API field. Bandwidth is GB/s in this dataset.
+    const specValues = {
+        specModel: `${gpu.brand} ${gpu.model}`,
+        specManufacturer: gpu.manufacturer,
+        specArchitecture: gpu.architecture,
+        specVram: gpu.vram,
+        specMemoryType: gpu.memory_type,
+        specCuda: formatNumber(gpu.cuda_cores),
+        specCoreCount: formatNumber(gpu.core_count ?? gpu.cuda_cores),
+        specCoreType: gpu.core_type,
+        specBus: gpu.memory_bus,
+        specMemoryBandwidth: gpu.memory_bandwidth_gbps == null
+            ? (gpu.memory_bandwidth || "Not available")
+            : formatMeasurement(gpu.memory_bandwidth_gbps, "GB/s"),
+        specSeries: series,
+        specPower: gpu.power,
+        specBaseClock: gpu.base_clock,
+        specBoostClock: gpu.boost_clock,
+        specPsu: gpu.recommended_psu,
+        specProcessNode: formatMeasurement(gpu.process_node_nm, "nm"),
+        specPcieInterface: gpu.pcie_interface,
+        specLaunchPrice: formatLaunchPrice(gpu),
+        specReleaseDate: gpu.release_date
+    };
 
-    document.getElementById(
-        "detailsSeries"
-    ).textContent =
-        series;
-
-
-    document.getElementById(
-        "detailsModel"
-    ).textContent =
-        gpu.model;
-
-
-    document.getElementById(
-        "detailsArchitecture"
-    ).textContent =
-        `${gpu.architecture} Architecture`;
-
-
-    document.getElementById(
-        "detailsDescription"
-    ).textContent =
-        gpu.description;
-
-
-    document.getElementById(
-        "detailsVram"
-    ).textContent =
-        gpu.vram;
-
-
-    document.getElementById(
-        "detailsCuda"
-    ).textContent =
-        formatNumber(gpu.cuda_cores);
-
-
-    document.getElementById(
-        "detailsPlaceholderModel"
-    ).textContent =
-        gpu.model;
-
-
-    document.getElementById(
-        "detailsImageHint"
-    ).textContent =
-        `Add ${imagePath}`;
-
-
-    // Specifications
-
-    document.getElementById(
-        "specModel"
-    ).textContent =
-        `${gpu.brand} ${gpu.model}`;
-
-
-    document.getElementById(
-        "specArchitecture"
-    ).textContent =
-        gpu.architecture;
-
-
-    document.getElementById(
-        "specVram"
-    ).textContent =
-        gpu.vram;
-
-
-    document.getElementById(
-        "specCuda"
-    ).textContent =
-        formatNumber(gpu.cuda_cores);
-
-
-    document.getElementById(
-        "specBus"
-    ).textContent =
-        gpu.memory_bus;
-
-
-    document.getElementById(
-        "specSeries"
-    ).textContent =
-        series;
-
-
-    document.getElementById(
-        "specPower"
-    ).textContent =
-        gpu.power ?? "—";
-
-
-    document.getElementById(
-        "specBaseClock"
-    ).textContent =
-        gpu.base_clock ?? "—";
-
-
-    document.getElementById(
-        "specBoostClock"
-    ).textContent =
-        gpu.boost_clock ?? "—";
-
-
-    document.getElementById(
-        "specPsu"
-    ).textContent =
-        gpu.recommended_psu ?? "—";
-
-
-    document.getElementById(
-        "specReleaseDate"
-    ).textContent =
-        gpu.release_date ?? "—";
-
-
-    document.getElementById(
-        "detailsOverview"
-    ).textContent =
-        buildOverview(gpu);
+    Object.entries({ ...detailValues, ...specValues }).forEach(([id, value]) => {
+        document.getElementById(id).textContent =
+            value === null || value === undefined || value === ""
+                ? "Not available"
+                : value;
+    });
 
 
     // GPU image
