@@ -1,5 +1,31 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+class GPU(BaseModel):
+    id: int
+    brand: str
+    model: str
+    architecture: str
+    vram: str
+    cuda_cores: int
+    memory_bus: str
+    power: str
+    base_clock: str
+    boost_clock: str
+    recommended_psu: str
+    release_date: str
+    description: str
+
+API_KEY = "lance-gpu-api"
+
+def verify_api_key(x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key"
+        )
+    return x_api_key
 
 app = FastAPI(
     title="Simple NVIDIA GPU API",
@@ -714,6 +740,10 @@ gpus = [
     },
 ]
 
+# VALIDATE GPU DATA USING PYDANTIC
+validated_gpus = [GPU(**gpu) for gpu in gpus]
+gpus = [gpu.model_dump() for gpu in validated_gpus]
+
 # HOME
 @app.get("/")
 def home():
@@ -726,28 +756,48 @@ def home():
         ]
     }
 
+# HEALTH CHECK
+@app.get("/health")
+def health_check():
+    return {
+        "status": "healthy",
+        "gpu_count": len(gpus)
+    }
+
 # GET ALL GPUS
 @app.get("/gpus")
-def get_gpus():
+def get_gpus(api_key: str = Depends(verify_api_key)):
     return {
         "count": len(gpus),
         "gpus": gpus
     }
 
-# SEARCH GPUS
+# EXPANDED GPU SEARCH
 @app.get("/gpus/search")
-def search_gpus(q: str = Query(..., min_length=1)):
-    q = q.lower()
+def search_gpus(
+    q: str = Query(..., min_length=1),
+    api_key: str = Depends(verify_api_key)
+):
+    q = q.lower().strip()
 
     results = []
 
     for gpu in gpus:
-        searchable_text = (
-            f"{gpu['brand']} "
-            f"{gpu['model']} "
-            f"{gpu['architecture']} "
-            f"{gpu['vram']}"
-        ).lower()
+        searchable_text = " ".join([
+            str(gpu["id"]),
+            gpu["brand"],
+            gpu["model"],
+            gpu["architecture"],
+            gpu["vram"],
+            str(gpu["cuda_cores"]),
+            gpu["memory_bus"],
+            gpu["power"],
+            gpu["base_clock"],
+            gpu["boost_clock"],
+            gpu["recommended_psu"],
+            gpu["release_date"],
+            gpu["description"]
+        ]).lower()
 
         if q in searchable_text:
             results.append(gpu)
@@ -757,7 +807,7 @@ def search_gpus(q: str = Query(..., min_length=1)):
         "count": len(results),
         "results": results
     }
-
+    
 # GET ONE GPU
 @app.get("/gpus/{gpu_id}")
 def get_gpu(gpu_id: int):
