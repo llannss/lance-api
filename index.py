@@ -1,21 +1,23 @@
 from fastapi import FastAPI, HTTPException, Query, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from typing import Literal
+from datetime import datetime, timezone
 
 class GPU(BaseModel):
-    id: int
-    brand: str
-    model: str
-    architecture: str
-    vram: str
-    cuda_cores: int
-    memory_bus: str
-    power: str
-    base_clock: str
-    boost_clock: str
-    recommended_psu: str
-    release_date: str
-    description: str
+    id: int = Field(gt=0)
+    brand: Literal["NVIDIA"]
+    model: str = Field(min_length=1)
+    architecture: str = Field(min_length=1)
+    vram: str = Field(min_length=1)
+    cuda_cores: int = Field(ge=0)
+    memory_bus: str = Field(min_length=1)
+    power: str = Field(min_length=1)
+    base_clock: str = Field(min_length=1)
+    boost_clock: str = Field(min_length=1)
+    recommended_psu: str = Field(min_length=1)
+    release_date: str = Field(min_length=1)
+    description: str = Field(min_length=1)
 
 API_KEY = "apinilance"
 
@@ -740,9 +742,9 @@ gpus = [
     },
 ]
 
-# VALIDATE GPU DATA USING PYDANTIC
-validated_gpus = [GPU(**gpu) for gpu in gpus]
-gpus = [gpu.model_dump() for gpu in validated_gpus]
+# ON-BOOT PYDANTIC VALIDATION
+validated_gpus = [GPU(**gpu).model_dump() for gpu in gpus]
+gpus = validated_gpus
 
 # HOME
 @app.get("/")
@@ -761,22 +763,22 @@ def home():
 def health_check():
     return {
         "status": "healthy",
-        "gpu_count": len(gpus)
+        "service": "Simple NVIDIA GPU API",
+        "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
 # GET ALL GPUS
-@app.get("/gpus")
-def get_gpus(api_key: str = Depends(verify_api_key)):
+@app.get("/gpus", dependencies=[Depends(verify_api_key)])
+def get_gpus():
     return {
         "count": len(gpus),
         "gpus": gpus
     }
 
 # EXPANDED GPU SEARCH
-@app.get("/gpus/search")
+@app.get("/gpus/search", dependencies=[Depends(verify_api_key)])
 def search_gpus(
-    q: str = Query(..., min_length=1),
-    api_key: str = Depends(verify_api_key)
+    q: str = Query(..., min_length=1)
 ):
     q = q.lower().strip()
 
@@ -809,7 +811,7 @@ def search_gpus(
     }
     
 # GET ONE GPU
-@app.get("/gpus/{gpu_id}")
+@app.get("/gpus/{gpu_id}", dependencies=[Depends(verify_api_key)])
 def get_gpu(gpu_id: int):
 
     for gpu in gpus:
