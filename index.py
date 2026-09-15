@@ -17,7 +17,7 @@ class GPU(BaseModel):
     release_date: str
     description: str
 
-API_KEY = "lance-gpu-api"
+API_KEY = "apinilance"
 
 def verify_api_key(x_api_key: str = Header(None)):
     if x_api_key != API_KEY:
