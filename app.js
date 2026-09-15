@@ -1,11 +1,5 @@
 const API_URL = "https://lance-api-murex.vercel.app";
-const API_KEY = "apinilance"
-
-const FETCH_OPTIONS = {
-    headers: {
-        "x-api-key": API_KEY
-    }
-}
+const API_KEY = "lance-gpu-api";
 
 const catalogView = document.getElementById("catalogView");
 const detailsView = document.getElementById("detailsView");
@@ -150,7 +144,11 @@ async function loadGPUs() {
     setLoadingState();
 
     try {
-        const response = await fetch(`${API_URL}/gpus`);
+        const response = await fetch(`${API_URL}/gpus`, {
+            headers: {
+                "x-api-key": API_KEY
+            }
+        });
 
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -569,8 +567,11 @@ gpuList.appendChild(section);
 
 async function viewGPU(id) {
     try {
-        const response =
-            await fetch(`${API_URL}/gpus/${id}`);
+        const response = await fetch(`${API_URL}/gpus/${id}`, {
+            headers: {
+                "x-api-key": API_KEY
+            }
+        });
 
 
         if (!response.ok) {
@@ -823,10 +824,14 @@ async function searchGPUs(query) {
 
 
     try {
-        const response =
-            await fetch(
-                `${API_URL}/gpus/search?q=${encodeURIComponent(cleanQuery)}`
-            );
+        const response = await fetch(
+            `${API_URL}/gpus/search?q=${encodeURIComponent(cleanQuery)}`,
+            {
+                headers: {
+                    "x-api-key": API_KEY
+                }
+            }
+        );
 
 
         if (!response.ok) {
