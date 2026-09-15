@@ -1,4 +1,11 @@
 const API_URL = "https://lance-api-murex.vercel.app";
+const API_KEY = "apinilance"
+
+const FETCH_OPTIONS = {
+    headers: {
+        "x-api-key": API_KEY
+    }
+}
 
 const catalogView = document.getElementById("catalogView");
 const detailsView = document.getElementById("detailsView");
