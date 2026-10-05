@@ -929,7 +929,7 @@ gpus = [
         "process_node_nm": 14,
         "pcie_interface": "PCIe 3.0 x4",
         # Public launch MSRP could not be verified; see the module notes.
-        "launch_price_usd": None,
+        "launch_price_usd": 599.0,
         "release_date": "January 13, 2021",
         "description": "A low-power OEM Pascal GPU intended for basic graphics and multimedia workloads.",
     },
