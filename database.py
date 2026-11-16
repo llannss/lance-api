@@ -199,6 +199,121 @@ class FavoriteRepository(Repository):
         )
 
 
+class RecentRepository(Repository):
+    """GPUs each account viewed recently, in public.recently_viewed."""
+
+    KEEP = 20
+
+    def record(self, user_id: int, gpu_id: int) -> None:
+        """Move the GPU to the top of the account's list, then keep the newest 20."""
+        now = datetime.now(timezone.utc).isoformat()
+        updated = self._run(
+            self.client.table("recently_viewed")
+            .update({"viewed_at": now})
+            .eq("user_id", user_id)
+            .eq("gpu_id", gpu_id)
+        )
+        if not updated.data:
+            try:
+                self._run(self.client.table("recently_viewed").insert(
+                    {"user_id": user_id, "gpu_id": gpu_id, "viewed_at": now}
+                ))
+            except DuplicateFavoriteError:
+                pass   # another tab recorded it at the same moment
+        older = self.list_ids(user_id, limit=100)[self.KEEP:]
+        if older:
+            self._run(
+                self.client.table("recently_viewed").delete()
+                .eq("user_id", user_id).in_("gpu_id", older)
+            )
+
+    def list_ids(self, user_id: int, limit: int = 10) -> list[int]:
+        response = self._run(
+            self.client.table("recently_viewed")
+            .select("gpu_id")
+            .eq("user_id", user_id)
+            .order("viewed_at", desc=True)
+            .limit(limit)
+        )
+        return [int(row["gpu_id"]) for row in response.data or []]
+
+    def clear(self, user_id: int) -> None:
+        self._run(self.client.table("recently_viewed").delete().eq("user_id", user_id))
+
+
+# Duplicates in recently_viewed are handled like duplicate favorites.
+RecentRepository.duplicate_error = DuplicateFavoriteError
+
+
+class DuplicateComparisonError(Exception):
+    """This account already saved the same pair of GPUs."""
+
+
+class ComparisonRepository(Repository):
+    """Saved GPU comparisons of each account, in public.saved_comparisons."""
+
+    duplicate_error = DuplicateComparisonError
+    COLUMNS = "id,gpu_a_id,gpu_b_id,name,created_at"
+
+    def list(self, user_id: int) -> list[dict]:
+        response = self._run(
+            self.client.table("saved_comparisons")
+            .select(self.COLUMNS)
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(200)
+        )
+        return response.data or []
+
+    def find_pair(self, user_id: int, gpu_a_id: int, gpu_b_id: int) -> dict | None:
+        """A saved comparison of these two GPUs, in either order."""
+        for a, b in ((gpu_a_id, gpu_b_id), (gpu_b_id, gpu_a_id)):
+            response = self._run(
+                self.client.table("saved_comparisons").select(self.COLUMNS)
+                .eq("user_id", user_id).eq("gpu_a_id", a).eq("gpu_b_id", b).limit(1)
+            )
+            if response.data:
+                return response.data[0]
+        return None
+
+    def create(self, user_id: int, gpu_a_id: int, gpu_b_id: int, name: str | None) -> dict:
+        response = self._run(self.client.table("saved_comparisons").insert({
+            "user_id": user_id, "gpu_a_id": gpu_a_id, "gpu_b_id": gpu_b_id, "name": name,
+        }))
+        if not response.data:
+            raise DatabaseUnavailableError()
+        row = response.data[0]
+        return {key: row[key] for key in self.COLUMNS.split(",")}
+
+    def delete(self, user_id: int, comparison_id: int) -> bool:
+        """Delete one of the account's own comparisons. False if not found."""
+        response = self._run(
+            self.client.table("saved_comparisons").delete()
+            .eq("id", comparison_id).eq("user_id", user_id)
+        )
+        return bool(response.data)
+
+
+class AuditRepository(Repository):
+    """Append-only log of admin changes, in public.audit_log."""
+
+    COLUMNS = "id,admin_id,admin_email,action,gpu_id,gpu_model,changes,created_at"
+
+    def add(self, entry: dict) -> None:
+        self._run(self.client.table("audit_log").insert(entry))
+
+    def list(self, limit: int, offset: int) -> tuple[list[dict], int]:
+        response = self._run(
+            self.client.table("audit_log")
+            .select(self.COLUMNS, count="exact")
+            .order("created_at", desc=True)
+            .order("id", desc=True)
+            .range(offset, offset + limit - 1)
+        )
+        total = response.count if response.count is not None else len(response.data or [])
+        return response.data or [], total
+
+
 class ImageStore:
     """GPU pictures in the public Supabase Storage bucket.
 
@@ -398,6 +513,21 @@ def get_rate_limiter() -> RateLimiter:
 def get_favorite_repository() -> FavoriteRepository:
     """FastAPI dependency for saved favorite GPUs."""
     return FavoriteRepository(_get_client())
+
+
+def get_recent_repository() -> RecentRepository:
+    """FastAPI dependency for recently viewed GPUs."""
+    return RecentRepository(_get_client())
+
+
+def get_comparison_repository() -> ComparisonRepository:
+    """FastAPI dependency for saved comparisons."""
+    return ComparisonRepository(_get_client())
+
+
+def get_audit_repository() -> AuditRepository:
+    """FastAPI dependency for the admin activity log."""
+    return AuditRepository(_get_client())
 
 
 def get_image_store() -> ImageStore:

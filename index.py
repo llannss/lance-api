@@ -13,6 +13,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Path, Query, Request,
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+import activity
 import auth
 import chat
 import favorites
@@ -23,12 +24,14 @@ from database import (
     DatabaseUnavailableError,
     DuplicateEmailError,
     DuplicateGPUError,
+    AuditRepository,
     GPURepository,
     ImageStore,
     InvalidGPUError,
     RateLimiter,
     TokenRepository,
     UserRepository,
+    get_audit_repository,
     get_image_store,
     get_rate_limiter,
     get_repository,
@@ -95,6 +98,9 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(favorites.router)
+app.include_router(activity.recent_router)
+app.include_router(activity.comparisons_router)
+app.include_router(activity.audit_router)
 
 GPU_NOT_FOUND = "GPU not found."
 LINK_INVALID = "This link is invalid or has expired."
@@ -183,6 +189,13 @@ def home():
             "GET /me/favorites",
             "PUT /me/favorites/{gpu_id}",
             "DELETE /me/favorites/{gpu_id}",
+            "GET /me/recent",
+            "POST /me/recent/{gpu_id}",
+            "DELETE /me/recent",
+            "GET /me/comparisons",
+            "POST /me/comparisons",
+            "DELETE /me/comparisons/{comparison_id}",
+            "GET /admin/audit",
             "GET /gpus",
             "GET /gpus/search?q=keyword",
             "GET /gpus/{gpu_id}",
@@ -502,15 +515,17 @@ def get_gpu(gpu_id: int = GpuId, repository: GPURepository = Depends(get_reposit
     "/gpus",
     response_model=GPU,
     status_code=201,
-    dependencies=[Depends(require_admin)],
     tags=["GPUs"],
 )
 def create_gpu(
     gpu: GPUCreate,
     response: Response,
     repository: GPURepository = Depends(get_repository),
+    admin: dict = Depends(require_admin),
+    audit: AuditRepository = Depends(get_audit_repository),
 ):
     created = repository.create(gpu.model_dump(mode="json"))
+    activity.record(audit, admin, "gpu.create", created)
     response.headers["Location"] = f"/gpus/{created['id']}"
     return created
 
@@ -520,17 +535,24 @@ def create_gpu(
 @app.put(
     "/gpus/{gpu_id}",
     response_model=GPU,
-    dependencies=[Depends(require_admin)],
     tags=["GPUs"],
 )
 def update_gpu(
     gpu: GPUCreate,
     gpu_id: int = GpuId,
     repository: GPURepository = Depends(get_repository),
+    admin: dict = Depends(require_admin),
+    audit: AuditRepository = Depends(get_audit_repository),
 ):
+    before = repository.get(gpu_id)
+    if before is None:
+        raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
     updated = repository.update(gpu_id, gpu.model_dump(mode="json"))
     if updated is None:
         raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+    changes = activity.diff(before, updated)
+    if changes:
+        activity.record(audit, admin, "gpu.update", updated, changes)
     return updated
 
 
@@ -539,17 +561,19 @@ def update_gpu(
 @app.delete(
     "/gpus/{gpu_id}",
     status_code=204,
-    dependencies=[Depends(require_admin)],
     tags=["GPUs"],
 )
 def delete_gpu(
     gpu_id: int = GpuId,
     repository: GPURepository = Depends(get_repository),
     store: ImageStore = Depends(get_image_store),
+    admin: dict = Depends(require_admin),
+    audit: AuditRepository = Depends(get_audit_repository),
 ):
     deleted = repository.delete(gpu_id)
     if deleted is None:
         raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+    activity.record(audit, admin, "gpu.delete", deleted)
     store.remove_url(deleted.get("image_url"))
     return Response(status_code=204)
 
@@ -559,7 +583,6 @@ def delete_gpu(
 @app.post(
     "/gpus/{gpu_id}/image",
     response_model=GPU,
-    dependencies=[Depends(require_admin)],
     tags=["GPUs"],
     responses={413: {"description": "File over 4 MB"}, 422: {"description": "Not a PNG, JPEG or WebP picture"}},
 )
@@ -568,6 +591,8 @@ def upload_gpu_image(
     file: UploadFile = File(description="A PNG, JPEG or WebP picture, up to 4 MB."),
     repository: GPURepository = Depends(get_repository),
     store: ImageStore = Depends(get_image_store),
+    admin: dict = Depends(require_admin),
+    audit: AuditRepository = Depends(get_audit_repository),
 ):
     """Set or replace a GPU's picture. The file is checked, resized to at most
     1000 px and converted to WebP before it is stored in Supabase Storage."""
@@ -590,19 +615,21 @@ def upload_gpu_image(
         store.remove_url(url)
         raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
     store.remove_url(gpu.get("image_url"))
+    activity.record(audit, admin, "image.upload", updated)
     return updated
 
 
 @app.delete(
     "/gpus/{gpu_id}/image",
     response_model=GPU,
-    dependencies=[Depends(require_admin)],
     tags=["GPUs"],
 )
 def delete_gpu_image(
     gpu_id: int = GpuId,
     repository: GPURepository = Depends(get_repository),
     store: ImageStore = Depends(get_image_store),
+    admin: dict = Depends(require_admin),
+    audit: AuditRepository = Depends(get_audit_repository),
 ):
     """Remove a GPU's picture. The website then shows its built-in placeholder."""
     gpu = repository.get(gpu_id)
@@ -612,4 +639,6 @@ def delete_gpu_image(
     if updated is None:
         raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
     store.remove_url(gpu.get("image_url"))
+    if gpu.get("image_url"):
+        activity.record(audit, admin, "image.remove", updated)
     return updated

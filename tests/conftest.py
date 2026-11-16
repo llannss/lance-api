@@ -16,6 +16,12 @@ from supabase import ClientOptions, create_client
 import auth
 import mailer
 from database import (
+    AuditRepository,
+    ComparisonRepository,
+    RecentRepository,
+    get_audit_repository,
+    get_comparison_repository,
+    get_recent_repository,
     FavoriteRepository,
     GPURepository,
     ImageStore,
@@ -127,6 +133,8 @@ class FakeDataAPI:
         self.files: dict[str, bytes] = {}   # the gpu-images Storage bucket
         self.favorites: list[dict] = []     # the favorites table
         self.clock = 0                      # increasing created_at for favorites
+        self.tables: dict[str, list[dict]] = {}   # recently_viewed, saved_comparisons, audit_log
+        self.next_ids: dict[str, int] = {}
         self.storage_failure = False
         self.requests: list[tuple[str, str]] = []
         self.max_rows: int | None = None   # server page limit, like Supabase "Max rows"
@@ -233,6 +241,71 @@ class FakeDataAPI:
             gone = self.filter_rows(list(self.favorites), params)
             self.favorites = [r for r in self.favorites if r not in gone]
             return httpx.Response(200, json=gone)
+        return httpx.Response(405, json={"message": "method not allowed"})
+
+    # Generic tables: name -> (unique key columns, has identity id)
+    GENERIC = {
+        "recently_viewed": (("user_id", "gpu_id"), False),
+        "saved_comparisons": (("user_id", "gpu_a_id", "gpu_b_id"), True),
+        "audit_log": ((), True),
+    }
+
+    def handle_generic(self, name: str, request: httpx.Request) -> httpx.Response:
+        """A small PostgREST stand-in: filters, order, limit/offset, insert,
+        update, delete and unique keys."""
+        unique, identity = self.GENERIC[name]
+        table = self.tables.setdefault(name, [])
+        params = request.url.params
+
+        if request.method == "POST":
+            new = json.loads(request.content)
+            if unique and any(all(r[k] == new[k] for k in unique) for r in table):
+                return httpx.Response(409, json={
+                    "code": "23505", "details": "duplicate", "hint": None,
+                    "message": f'duplicate key value violates unique constraint "{name}_key"',
+                })
+            self.clock += 1
+            row = {**new}
+            row.setdefault("created_at", f"2026-01-01T00:{self.clock // 60:02d}:{self.clock % 60:02d}+00:00")
+            if identity:
+                self.next_ids[name] = self.next_ids.get(name, 0) + 1
+                row["id"] = self.next_ids[name]
+            table.append(row)
+            return httpx.Response(201, json=[row])
+
+        rows = list(table)
+        for column, condition in params.multi_items():
+            if column in ("select", "limit", "offset", "order"):
+                continue
+            operator, value = condition.split(".", 1)
+            if operator == "eq":
+                rows = [r for r in rows if str(r.get(column)) == value]
+            elif operator == "in":
+                wanted = set(value.strip("()").split(","))
+                rows = [r for r in rows if str(r.get(column)) in wanted]
+            else:
+                raise AssertionError(f"unsupported filter {column}={condition}")
+
+        if request.method == "GET":
+            for part in reversed(params.get("order", "").split(",")):
+                if part:
+                    col, _, direction = part.partition(".")
+                    rows.sort(key=lambda r: str(r.get(col)), reverse=direction.startswith("desc"))
+            total = len(rows)
+            offset = int(params.get("offset", 0))
+            limit = int(params["limit"]) if "limit" in params else total
+            page = self.pick(rows[offset:offset + limit], params)
+            headers = {}
+            if "count=exact" in request.headers.get("prefer", ""):
+                headers["content-range"] = f"{offset}-{offset + len(page) - 1}/{total}" if page else f"*/{total}"
+            return httpx.Response(200, json=page, headers=headers)
+        if request.method == "PATCH":
+            for r in rows:
+                r.update(json.loads(request.content))
+            return httpx.Response(200, json=rows)
+        if request.method == "DELETE":
+            self.tables[name] = [r for r in table if r not in rows]
+            return httpx.Response(200, json=rows)
         return httpx.Response(405, json={"message": "method not allowed"})
 
     @staticmethod
@@ -351,6 +424,9 @@ class FakeDataAPI:
             return self.handle_tokens(request)
         if request.url.path == "/rest/v1/favorites":
             return self.handle_favorites(request)
+        table = request.url.path.removeprefix("/rest/v1/")
+        if table in self.GENERIC:
+            return self.handle_generic(table, request)
         if request.url.path.startswith("/rest/v1/rpc/"):
             return self.handle_rpc(request)
         assert request.url.path == "/rest/v1/gpus"
@@ -465,6 +541,9 @@ def anonymous(api):
     app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(supabase)
     app.dependency_overrides[get_image_store] = lambda: ImageStore(supabase)
     app.dependency_overrides[get_favorite_repository] = lambda: FavoriteRepository(supabase)
+    app.dependency_overrides[get_recent_repository] = lambda: RecentRepository(supabase)
+    app.dependency_overrides[get_comparison_repository] = lambda: ComparisonRepository(supabase)
+    app.dependency_overrides[get_audit_repository] = lambda: AuditRepository(supabase)
     # https so the client keeps and sends the Secure session cookie.
     with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client
