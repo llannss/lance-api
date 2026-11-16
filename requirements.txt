@@ -5,3 +5,5 @@ supabase>=2.20,<3
 httpx>=0.26,<0.29
 pyjwt>=2.8
 python-dotenv>=1.0
+pillow>=11.0
+python-multipart>=0.0.18

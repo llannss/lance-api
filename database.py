@@ -19,8 +19,11 @@ COLUMNS = (
     "id,brand,manufacturer,model,series,architecture,vram,memory_type,"
     "cuda_cores,core_count,core_type,memory_bus,memory_bandwidth_gbps,power,"
     "base_clock,boost_clock,recommended_psu,process_node_nm,pcie_interface,"
-    "launch_price_usd,release_date,description"
+    "launch_price_usd,release_date,description,image_url"
 )
+
+# Supabase Storage bucket for GPU pictures (created by supabase/storage.sql).
+IMAGE_BUCKET = "gpu-images"
 
 # The account columns the API returns. password_hash is left out on purpose.
 USER_COLUMNS = "id,email,role,created_at,email_verified,token_version,failed_logins,locked_until"
@@ -142,9 +145,63 @@ class GPURepository(Repository):
         )
         return response.data[0] if response.data else None
 
-    def delete(self, gpu_id: int) -> bool:
+    def delete(self, gpu_id: int) -> dict | None:
+        """Delete a GPU and return the deleted row, or None if it did not exist."""
         response = self._run(self.client.table("gpus").delete().eq("id", gpu_id))
-        return bool(response.data)
+        return response.data[0] if response.data else None
+
+    def set_image_url(self, gpu_id: int, image_url: str | None) -> dict | None:
+        """Point a GPU at a picture (or none). Returns the updated GPU."""
+        response = self._run(
+            self.client.table("gpus").update({"image_url": image_url}).eq("id", gpu_id)
+        )
+        return response.data[0] if response.data else None
+
+
+class ImageStore:
+    """GPU pictures in the public Supabase Storage bucket.
+
+    Files are named by the API (gpu-<id>-<random>.webp), so an upload can never
+    overwrite another picture, and the public URL changes whenever the picture
+    does, which keeps browser caches correct.
+    """
+
+    def __init__(self, client: Client):
+        self.bucket = client.storage.from_(IMAGE_BUCKET)
+
+    def upload(self, path: str, data: bytes) -> str:
+        """Store a WebP file and return its public URL."""
+        try:
+            self.bucket.upload(path, data, {
+                "content-type": "image/webp",
+                "cache-control": "31536000",   # names never change, so cache for a year
+                "upsert": "false",
+            })
+        except Exception as error:
+            logger.error("Picture upload failed: %s", type(error).__name__)
+            raise DatabaseUnavailableError() from error
+        return self.bucket.get_public_url(path)
+
+    def remove_url(self, url: str | None) -> None:
+        """Delete the file behind one of our public URLs. Never raises:
+        a leftover file is harmless, a failed GPU update is not."""
+        path = self.path_from_url(url)
+        if not path:
+            return
+        try:
+            self.bucket.remove([path])
+        except Exception as error:
+            logger.warning("Could not delete old picture: %s", type(error).__name__)
+
+    @staticmethod
+    def path_from_url(url: str | None) -> str | None:
+        """'.../storage/v1/object/public/gpu-images/x.webp' -> 'x.webp'.
+        Returns None for anything that is not a file in our bucket."""
+        marker = f"/storage/v1/object/public/{IMAGE_BUCKET}/"
+        if not url or marker not in url:
+            return None
+        path = url.split(marker, 1)[1].split("?", 1)[0]
+        return path if path and "/" not in path and ".." not in path else None
 
 
 class UserRepository(Repository):
@@ -295,3 +352,8 @@ def get_token_repository() -> TokenRepository:
 def get_rate_limiter() -> RateLimiter:
     """FastAPI dependency for the shared rate limiter."""
     return RateLimiter(_get_client())
+
+
+def get_image_store() -> ImageStore:
+    """FastAPI dependency for GPU pictures in Supabase Storage."""
+    return ImageStore(_get_client())

@@ -17,6 +17,8 @@ import auth
 import mailer
 from database import (
     GPURepository,
+    ImageStore,
+    get_image_store,
     RateLimiter,
     TokenRepository,
     UserRepository,
@@ -120,6 +122,8 @@ class FakeDataAPI:
         self.rate_hits: dict[str, int] = {}
         # Lower a limit in a test, e.g. {"login-ip": 2}. Keyed by key prefix.
         self.rate_limit_override: dict[str, int] = {}
+        self.files: dict[str, bytes] = {}   # the gpu-images Storage bucket
+        self.storage_failure = False
         self.requests: list[tuple[str, str]] = []
         self.max_rows: int | None = None   # server page limit, like Supabase "Max rows"
         self.failure: str | None = None    # "timeout" or "error"
@@ -128,6 +132,7 @@ class FakeDataAPI:
 
     def insert(self, gpu: dict) -> dict:
         row = {key: value for key, value in gpu.items() if key != "search_text"}
+        row.setdefault("image_url", None)
         row["id"] = self.next_id
         self.next_id += 1
         row["search_text"] = " ".join(str(row[c]) for c in SEARCH_COLUMNS).lower()
@@ -202,6 +207,40 @@ class FakeDataAPI:
             return httpx.Response(200, json=rows)
         return httpx.Response(405, json={"message": "method not allowed"})
 
+    @staticmethod
+    def uploaded_bytes(request: httpx.Request) -> bytes:
+        """The file part of the SDK's multipart upload (or the raw body)."""
+        ctype = request.headers.get("content-type", "")
+        if not ctype.startswith("multipart/"):
+            return request.content
+        from email.parser import BytesParser
+        from email.policy import HTTP
+        message = BytesParser(policy=HTTP).parsebytes(
+            f"Content-Type: {ctype}\r\n\r\n".encode() + request.content
+        )
+        for part in message.iter_parts():
+            if part.get_filename() or part.get_content_type().startswith("image/"):
+                return part.get_payload(decode=True)
+        raise AssertionError("no file part in upload")
+
+    def handle_storage(self, request: httpx.Request) -> httpx.Response:
+        """Supabase Storage: upload to and delete from the gpu-images bucket."""
+        prefix = "/storage/v1/object/gpu-images"
+        path = request.url.path
+        if request.method == "POST" and path.startswith(prefix + "/"):
+            name = path[len(prefix) + 1:]
+            if self.storage_failure:
+                return httpx.Response(500, json={"statusCode": "500", "error": "InternalError", "message": "boom"})
+            if name in self.files:
+                return httpx.Response(409, json={"statusCode": "409", "error": "Duplicate", "message": "exists"})
+            self.files[name] = self.uploaded_bytes(request)
+            return httpx.Response(200, json={"Key": f"gpu-images/{name}", "Id": name})
+        if request.method == "DELETE" and path == prefix:
+            names = json.loads(request.content)["prefixes"]
+            removed = [n for n in names if self.files.pop(n, None) is not None]
+            return httpx.Response(200, json=[{"name": n} for n in removed])
+        return httpx.Response(404, json={"statusCode": "404", "error": "not_found", "message": path})
+
     def handle_rpc(self, request: httpx.Request) -> httpx.Response:
         """public.hit_rate_limit: fixed-window counters kept in memory."""
         assert request.url.path == "/rest/v1/rpc/hit_rate_limit"
@@ -271,6 +310,8 @@ class FakeDataAPI:
                 "hint": None, "message": "internal database failure",
             })
 
+        if request.url.path.startswith("/storage/v1/"):
+            return self.handle_storage(request)
         assert request.headers["apikey"] == SUPABASE_TEST_KEY
         if request.url.path == "/rest/v1/users":
             return self.handle_users(request)
@@ -388,6 +429,7 @@ def anonymous(api):
     app.dependency_overrides[get_user_repository] = lambda: UserRepository(supabase)
     app.dependency_overrides[get_token_repository] = lambda: TokenRepository(supabase)
     app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(supabase)
+    app.dependency_overrides[get_image_store] = lambda: ImageStore(supabase)
     # https so the client keeps and sends the Secure session cookie.
     with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client

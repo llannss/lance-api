@@ -56,6 +56,10 @@ class GPU(GPUCreate):
     """A stored GPU, including the ID the database generated."""
 
     id: int = Field(gt=0, le=MAX_ID)
+    image_url: Optional[str] = Field(
+        default=None,
+        description="Public URL of the GPU's picture in Supabase Storage. Set with POST /gpus/{id}/image.",
+    )
 
 
 class GPUList(BaseModel):

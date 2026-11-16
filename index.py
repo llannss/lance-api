@@ -6,14 +6,16 @@ the admin role can add, update or delete GPUs.
 """
 
 import logging
+import secrets
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
+from fastapi import Depends, FastAPI, File, HTTPException, Path, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import auth
 import chat
+import images
 import mailer
 from config import get_settings
 from database import (
@@ -21,10 +23,12 @@ from database import (
     DuplicateEmailError,
     DuplicateGPUError,
     GPURepository,
+    ImageStore,
     InvalidGPUError,
     RateLimiter,
     TokenRepository,
     UserRepository,
+    get_image_store,
     get_rate_limiter,
     get_repository,
     get_token_repository,
@@ -180,6 +184,8 @@ def home():
             "POST /gpus",
             "PUT /gpus/{gpu_id}",
             "DELETE /gpus/{gpu_id}",
+            "POST /gpus/{gpu_id}/image",
+            "DELETE /gpus/{gpu_id}/image",
         ],
     }
 
@@ -531,7 +537,74 @@ def update_gpu(
     dependencies=[Depends(require_admin)],
     tags=["GPUs"],
 )
-def delete_gpu(gpu_id: int = GpuId, repository: GPURepository = Depends(get_repository)):
-    if not repository.delete(gpu_id):
+def delete_gpu(
+    gpu_id: int = GpuId,
+    repository: GPURepository = Depends(get_repository),
+    store: ImageStore = Depends(get_image_store),
+):
+    deleted = repository.delete(gpu_id)
+    if deleted is None:
         raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+    store.remove_url(deleted.get("image_url"))
     return Response(status_code=204)
+
+
+# ---------- GPU PICTURE ----------
+
+@app.post(
+    "/gpus/{gpu_id}/image",
+    response_model=GPU,
+    dependencies=[Depends(require_admin)],
+    tags=["GPUs"],
+    responses={413: {"description": "File over 4 MB"}, 422: {"description": "Not a PNG, JPEG or WebP picture"}},
+)
+def upload_gpu_image(
+    gpu_id: int = GpuId,
+    file: UploadFile = File(description="A PNG, JPEG or WebP picture, up to 4 MB."),
+    repository: GPURepository = Depends(get_repository),
+    store: ImageStore = Depends(get_image_store),
+):
+    """Set or replace a GPU's picture. The file is checked, resized to at most
+    1000 px and converted to WebP before it is stored in Supabase Storage."""
+    gpu = repository.get(gpu_id)
+    if gpu is None:
+        raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+
+    data = file.file.read(images.MAX_UPLOAD_BYTES + 1)
+    try:
+        webp = images.to_webp(data)
+    except images.ImageTooLargeError:
+        raise HTTPException(status_code=413, detail="The picture must be 4 MB or smaller.")
+    except images.InvalidImageError:
+        raise HTTPException(status_code=422, detail="Upload a PNG, JPEG or WebP picture.")
+
+    # The server picks the name, so uploads can't overwrite other files.
+    url = store.upload(f"gpu-{gpu_id}-{secrets.token_hex(8)}.webp", webp)
+    updated = repository.set_image_url(gpu_id, url)
+    if updated is None:              # the GPU was deleted meanwhile
+        store.remove_url(url)
+        raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+    store.remove_url(gpu.get("image_url"))
+    return updated
+
+
+@app.delete(
+    "/gpus/{gpu_id}/image",
+    response_model=GPU,
+    dependencies=[Depends(require_admin)],
+    tags=["GPUs"],
+)
+def delete_gpu_image(
+    gpu_id: int = GpuId,
+    repository: GPURepository = Depends(get_repository),
+    store: ImageStore = Depends(get_image_store),
+):
+    """Remove a GPU's picture. The website then shows its built-in placeholder."""
+    gpu = repository.get(gpu_id)
+    if gpu is None:
+        raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+    updated = repository.set_image_url(gpu_id, None)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=GPU_NOT_FOUND)
+    store.remove_url(gpu.get("image_url"))
+    return updated

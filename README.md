@@ -33,7 +33,9 @@ Version 2 stores the GPU catalog and the user accounts in a Supabase (PostgreSQL
 | GET | `/gpus/{gpu_id}` | Get one GPU | Logged-in user |
 | POST | `/gpus` | Add a GPU | Admin |
 | PUT | `/gpus/{gpu_id}` | Update a GPU | Admin |
-| DELETE | `/gpus/{gpu_id}` | Delete a GPU | Admin |
+| DELETE | `/gpus/{gpu_id}` | Delete a GPU (and its picture) | Admin |
+| POST | `/gpus/{gpu_id}/image` | Upload or replace a GPU's picture (PNG, JPEG or WebP, up to 4 MB) | Admin |
+| DELETE | `/gpus/{gpu_id}/image` | Remove a GPU's picture | Admin |
 
 Logging in sets an HttpOnly, Secure, `SameSite=Strict` cookie named `gpu_session` that lasts 8 hours; the website uses it. API clients such as Swagger can send `Authorization: Bearer <access_token>` instead, using the token from the login response. Writes made with the cookie must also send the header `X-Requested-With`, which other websites cannot add.
 
@@ -67,12 +69,15 @@ Limits are counted in the database (`hit_rate_limit`), so every Vercel instance 
 | `supabase/schema.sql` | Creates the `gpus` table |
 | `supabase/seed.sql` | Loads the 46 original GPUs |
 | `supabase/users.sql` | Creates the `users` table |
+| `images.py` | Checks uploaded pictures and converts them to WebP |
+| `scripts/upload_gpu_images.py` | One-time move of the website's pictures into Supabase Storage |
+| `supabase/storage.sql` | Adds `gpus.image_url` and the public `gpu-images` bucket |
 | `supabase/auth_upgrade.sql` | Adds email verification, lockout, sign-out everywhere, email links and rate limits |
 | `tests/` | Automated tests |
 
 ## Setup
 
-1. Create a Supabase project. In the SQL Editor, run `supabase/schema.sql`, then `supabase/seed.sql`, then `supabase/users.sql`, then `supabase/auth_upgrade.sql`.
+1. Create a Supabase project. In the SQL Editor, run `supabase/schema.sql`, then `supabase/seed.sql`, then `supabase/users.sql`, then `supabase/auth_upgrade.sql`, then `supabase/storage.sql`.
 2. Copy `.env.example` to `.env` and fill in your values. Git ignores `.env`.
 3. Install the packages and start the API:
 
@@ -82,6 +87,17 @@ Limits are counted in the database (`hit_rate_limit`), so every Vercel instance 
    ```
 
 4. Open http://127.0.0.1:8000/docs.
+
+## GPU pictures
+
+Pictures are stored in the public Supabase Storage bucket `gpu-images`; `gpus.image_url` holds each picture's public address. Only the API can add or remove files: an admin uploads with `POST /gpus/{gpu_id}/image`, and the API opens the file with Pillow, rejects anything that isn't a real PNG, JPEG or WebP, shrinks it to at most 1000 px, saves it as a new WebP file under a name it chooses, and deletes the old picture. Replacing GPU details with `PUT` keeps the picture; deleting a GPU deletes its picture.
+
+To move the website's existing pictures into the bucket once (with the real Supabase values in `.env`):
+
+```
+python scripts/upload_gpu_images.py ../lance-api-gpu-finder-main/images --dry-run
+python scripts/upload_gpu_images.py ../lance-api-gpu-finder-main/images
+```
 
 ## Environment variables
 
