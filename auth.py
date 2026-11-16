@@ -79,6 +79,10 @@ def create_token(user: dict) -> tuple[str, int]:
         "sub": str(user["id"]),
         "email": user["email"],
         "role": user["role"],
+        # The account's token_version when this token was issued. Raising the
+        # number in the database (sign out everywhere, password reset) makes
+        # every older token invalid.
+        "ver": int(user.get("token_version", 0)),
         "iat": now,
         "exp": now + lifetime,
     }
@@ -94,12 +98,28 @@ def read_token(token: str) -> dict:
             token,
             secret,
             algorithms=[TOKEN_ALGORITHM],
-            options={"require": ["sub", "email", "role", "exp"]},
+            options={"require": ["sub", "email", "role", "ver", "exp"]},
         )
         return {
             "id": int(payload["sub"]),
             "email": str(payload["email"]),
             "role": str(payload["role"]),
+            "ver": int(payload["ver"]),
         }
     except (jwt.PyJWTError, ValueError, TypeError) as error:
         raise InvalidTokenError() from error
+
+
+# ---------- one-time email links ----------
+
+LINK_SECRET_BYTES = 32
+
+
+def new_link_secret() -> tuple[str, str]:
+    """Return (secret for the emailed link, SHA-256 hash to store)."""
+    secret = secrets.token_urlsafe(LINK_SECRET_BYTES)
+    return secret, hash_link_secret(secret)
+
+
+def hash_link_secret(secret: str) -> str:
+    return hashlib.sha256(secret.encode()).hexdigest()

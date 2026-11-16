@@ -14,7 +14,17 @@ from fastapi.testclient import TestClient
 from supabase import ClientOptions, create_client
 
 import auth
-from database import GPURepository, UserRepository, get_repository, get_user_repository
+import mailer
+from database import (
+    GPURepository,
+    RateLimiter,
+    TokenRepository,
+    UserRepository,
+    get_rate_limiter,
+    get_repository,
+    get_token_repository,
+    get_user_repository,
+)
 from index import app
 
 SUPABASE_TEST_KEY = "test-secret-key"
@@ -106,6 +116,10 @@ class FakeDataAPI:
         self.next_id = 1
         self.users: list[dict] = []         # the users table
         self.next_user_id = 1
+        self.tokens: list[dict] = []        # the auth_tokens table
+        self.rate_hits: dict[str, int] = {}
+        # Lower a limit in a test, e.g. {"login-ip": 2}. Keyed by key prefix.
+        self.rate_limit_override: dict[str, int] = {}
         self.requests: list[tuple[str, str]] = []
         self.max_rows: int | None = None   # server page limit, like Supabase "Max rows"
         self.failure: str | None = None    # "timeout" or "error"
@@ -125,17 +139,77 @@ class FakeDataAPI:
             return tuple(row[c].lower() for c in ("brand", "manufacturer", "model"))
         return any(key(row) == key(gpu) and row["id"] != ignore_id for row in self.rows)
 
-    def insert_user(self, email: str, password: str, role: str = "user") -> dict:
+    def insert_user(self, email: str, password: str, role: str = "user", verified: bool = True) -> dict:
+        user = self.new_user_row(email, auth.hash_password(password), role, verified)
+        self.users.append(user)
+        return user
+
+    def new_user_row(self, email, password_hash, role="user", verified=False) -> dict:
         user = {
             "id": self.next_user_id,
             "email": email,
-            "password_hash": auth.hash_password(password),
+            "password_hash": password_hash,
             "role": role,
             "created_at": "2026-01-01T00:00:00+00:00",
+            "email_verified": verified,
+            "token_version": 0,
+            "failed_logins": 0,
+            "locked_until": None,
         }
         self.next_user_id += 1
-        self.users.append(user)
         return user
+
+    def user(self, email: str) -> dict:
+        return next(row for row in self.users if row["email"] == email)
+
+    @staticmethod
+    def filter_rows(rows: list[dict], params) -> list[dict]:
+        """Apply eq / is.null filters for any column in the query string."""
+        for column, condition in params.multi_items():
+            if column in ("select", "limit", "offset", "order"):
+                continue
+            operator, value = condition.split(".", 1)
+            if operator == "eq":
+                rows = [row for row in rows if str(row[column]) == value]
+            elif operator == "is" and value == "null":
+                rows = [row for row in rows if row[column] is None]
+            else:
+                raise AssertionError(f"unsupported filter {column}={condition}")
+        return rows
+
+    @staticmethod
+    def pick(rows: list[dict], params) -> list[dict]:
+        if "select" not in params:
+            return rows
+        wanted = params["select"].split(",")
+        return [{c: row[c] for c in wanted} for row in rows]
+
+    def handle_tokens(self, request: httpx.Request) -> httpx.Response:
+        """The auth_tokens table: insert, look up, mark used."""
+        params = request.url.params
+        if request.method == "POST":
+            new = json.loads(request.content)
+            row = {"id": len(self.tokens) + 1, "used_at": None, **new}
+            self.tokens.append(row)
+            return httpx.Response(201, json=[row])
+        rows = self.filter_rows(list(self.tokens), params)
+        if request.method == "GET":
+            return httpx.Response(200, json=self.pick(rows, params))
+        if request.method == "PATCH":
+            changes = json.loads(request.content)
+            for row in rows:
+                row.update(changes)
+            return httpx.Response(200, json=rows)
+        return httpx.Response(405, json={"message": "method not allowed"})
+
+    def handle_rpc(self, request: httpx.Request) -> httpx.Response:
+        """public.hit_rate_limit: fixed-window counters kept in memory."""
+        assert request.url.path == "/rest/v1/rpc/hit_rate_limit"
+        args = json.loads(request.content)
+        key = args["p_key"]
+        self.rate_hits[key] = self.rate_hits.get(key, 0) + 1
+        limit = self.rate_limit_override.get(key.split(":")[0], args["p_limit"])
+        return httpx.Response(200, json=self.rate_hits[key] <= limit)
 
     @property
     def gpu_requests(self) -> list[tuple[str, str]]:
@@ -146,17 +220,11 @@ class FakeDataAPI:
         return [r for r in self.gpu_requests if r[0] in ("POST", "PATCH", "DELETE")]
 
     def handle_users(self, request: httpx.Request) -> httpx.Response:
-        """The users table: look up by id or email, and insert."""
+        """The users table: look up by id or email, insert, and update."""
         params = request.url.params
         if request.method == "GET":
-            rows = list(self.users)
-            for column in ("id", "email"):
-                if column in params:
-                    operator, value = params[column].split(".", 1)
-                    assert operator == "eq"
-                    rows = [row for row in rows if str(row[column]) == value]
-            wanted = params["select"].split(",")
-            return httpx.Response(200, json=[{c: row[c] for c in wanted} for row in rows])
+            rows = self.filter_rows(list(self.users), params)
+            return httpx.Response(200, json=self.pick(rows, params))
         if request.method == "POST":
             new = json.loads(request.content)
             if any(row["email"] == new["email"] for row in self.users):
@@ -164,14 +232,18 @@ class FakeDataAPI:
                     "code": "23505", "details": "Key (email) already exists.", "hint": None,
                     "message": 'duplicate key value violates unique constraint "users_email_key"',
                 })
-            user = {
-                "id": self.next_user_id, "email": new["email"],
-                "password_hash": new["password_hash"], "role": "user",
-                "created_at": "2026-01-01T00:00:00+00:00",
-            }
-            self.next_user_id += 1
+            user = self.new_user_row(new["email"], new["password_hash"])
             self.users.append(user)
             return httpx.Response(201, json=[user])
+        if request.method == "PATCH":
+            changes = json.loads(request.content)
+            # Mirror the column grants in auth_upgrade.sql.
+            allowed = {"password_hash", "email_verified", "token_version", "failed_logins", "locked_until"}
+            assert set(changes) <= allowed, f"update of a column the backend may not change: {changes}"
+            rows = self.filter_rows(list(self.users), params)
+            for row in rows:
+                row.update(changes)
+            return httpx.Response(200, json=rows)
         return httpx.Response(405, json={"message": "method not allowed"})
 
     # ----- request handling -----
@@ -202,6 +274,10 @@ class FakeDataAPI:
         assert request.headers["apikey"] == SUPABASE_TEST_KEY
         if request.url.path == "/rest/v1/users":
             return self.handle_users(request)
+        if request.url.path == "/rest/v1/auth_tokens":
+            return self.handle_tokens(request)
+        if request.url.path.startswith("/rest/v1/rpc/"):
+            return self.handle_rpc(request)
         assert request.url.path == "/rest/v1/gpus"
         params = request.url.params
         prefer = request.headers.get("prefer", "")
@@ -267,6 +343,25 @@ def fast_test_settings(monkeypatch):
     monkeypatch.setattr(auth, "PBKDF2_ITERATIONS", 1_000)
 
 
+@pytest.fixture(autouse=True)
+def outbox(monkeypatch) -> list[dict]:
+    """Emails the API would have sent through Gmail. Nothing leaves the test."""
+    sent: list[dict] = []
+    monkeypatch.setenv("SITE_URL", "https://site.test")
+    monkeypatch.setenv("GMAIL_ADDRESS", "sender@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
+    monkeypatch.setattr(
+        mailer, "send_email",
+        lambda to, subject, text: sent.append({"to": to, "subject": subject, "text": text}),
+    )
+    return sent
+
+
+def link_secret(email: dict) -> str:
+    """The ?token= value from a sent email."""
+    return re.search(r"\?token=([A-Za-z0-9_-]+)", email["text"]).group(1)
+
+
 @pytest.fixture
 def api() -> FakeDataAPI:
     """The simulated database: three seed GPUs (IDs 1 to 3), one user and one admin."""
@@ -291,15 +386,23 @@ def anonymous(api):
     )
     app.dependency_overrides[get_repository] = lambda: GPURepository(supabase)
     app.dependency_overrides[get_user_repository] = lambda: UserRepository(supabase)
-    with TestClient(app) as test_client:
+    app.dependency_overrides[get_token_repository] = lambda: TokenRepository(supabase)
+    app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(supabase)
+    # https so the client keeps and sends the Secure session cookie.
+    with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client
     app.dependency_overrides.clear()
 
 
 def log_in(test_client, email: str, password: str) -> dict:
-    """Log in through the API and return the Authorization header."""
+    """Log in through the API and return the Authorization header.
+
+    The session cookie the login sets is dropped, so the client stays
+    anonymous unless the test sends the returned header.
+    """
     response = test_client.post("/auth/login", json={"email": email, "password": password})
     assert response.status_code == 200, response.text
+    test_client.cookies.clear()
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 

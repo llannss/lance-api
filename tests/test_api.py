@@ -8,7 +8,7 @@ import pytest
 import auth
 import database
 from conftest import (
-    ADMIN_EMAIL, AUTH_TEST_SECRET, USER_EMAIL, USER_PASSWORD, make_gpu,
+    ADMIN_EMAIL, AUTH_TEST_SECRET, USER_EMAIL, USER_PASSWORD, link_secret, make_gpu,
 )
 
 
@@ -17,7 +17,7 @@ from conftest import (
 def test_home_shows_api_information(anonymous):
     response = anonymous.get("/")
     assert response.status_code == 200
-    assert response.json()["version"] == "2.0.0"
+    assert response.json()["version"] == "2.1.0"
     assert "POST /gpus" in response.json()["endpoints"]
 
 
@@ -293,8 +293,9 @@ def test_login_returns_a_token_and_the_account(anonymous):
     assert "password" not in response.text
 
 
-def test_new_account_can_log_in_and_browse(anonymous):
+def test_new_account_can_log_in_and_browse(anonymous, outbox):
     anonymous.post("/auth/register", json=NEW_ACCOUNT)
+    anonymous.post("/auth/verify", json={"token": link_secret(outbox[-1])})
     token = anonymous.post("/auth/login", json=NEW_ACCOUNT).json()["access_token"]
     response = anonymous.get("/gpus", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
@@ -346,7 +347,8 @@ def test_write_as_regular_user_returns_403(client, api, method, path):
     response = client.request(method, path, json=make_gpu())
     assert response.status_code == 403
     assert response.json() == {"detail": "Admin access is required."}
-    assert api.requests == []
+    # Only the account lookup ran; the gpus table was never touched.
+    assert api.gpu_requests == []
 
 
 def test_invalid_tokens_are_rejected(anonymous, api):

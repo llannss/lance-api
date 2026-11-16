@@ -89,12 +89,52 @@ class Credentials(BaseModel):
         return value.lower()
 
 
+class EmailOnly(BaseModel):
+    """The body of POST /auth/forgot-password and /auth/resend-verification."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: str = Field(
+        min_length=3, max_length=254,
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+        examples=["student@example.com"],
+    )
+
+    @field_validator("email")
+    @classmethod
+    def lowercase_email(cls, value: str) -> str:
+        return value.lower()
+
+
+LinkSecret = Annotated[str, Field(min_length=20, max_length=200, pattern=r"^[A-Za-z0-9_-]+$")]
+
+
+class VerifyEmail(BaseModel):
+    """The body of POST /auth/verify: the secret from the emailed link."""
+
+    token: LinkSecret
+
+
+class ResetPassword(BaseModel):
+    """The body of POST /auth/reset-password."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    token: LinkSecret
+    password: str = Field(min_length=8, max_length=128, examples=["a-new-long-password"])
+
+
+class Message(BaseModel):
+    detail: str
+
+
 class User(BaseModel):
     """An account as the API returns it. The password hash is never included."""
 
     id: int
     email: str
     role: Literal["user", "admin"]
+    email_verified: bool = False
     created_at: datetime
 
 

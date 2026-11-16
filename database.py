@@ -5,6 +5,7 @@ endpoint functions in index.py never talk to the database directly.
 """
 
 import logging
+from datetime import datetime, timezone
 from functools import lru_cache
 
 from supabase import Client, ClientOptions, PostgrestAPIError, create_client
@@ -22,7 +23,7 @@ COLUMNS = (
 )
 
 # The account columns the API returns. password_hash is left out on purpose.
-USER_COLUMNS = "id,email,role,created_at"
+USER_COLUMNS = "id,email,role,created_at,email_verified,token_version,failed_logins,locked_until"
 
 # Rows requested per query. Supabase may return fewer, so lists are read in batches.
 BATCH_SIZE = 1000
@@ -178,6 +179,80 @@ class UserRepository(Repository):
             raise DatabaseUnavailableError()
         return response.data[0]
 
+    def update(self, user_id: int, changes: dict) -> None:
+        """Change account columns (only those users.sql/auth_upgrade.sql allow)."""
+        self._run(self.client.table("users").update(changes).eq("id", user_id))
+
+
+class TokenRepository(Repository):
+    """One-time email links (verify email, reset password) in public.auth_tokens.
+
+    Only a hash of each link's secret is stored, so a database leak does not
+    reveal working links.
+    """
+
+    def create(self, user_id: int, purpose: str, token_hash: str, expires_at: datetime) -> None:
+        self._run(self.client.table("auth_tokens").insert({
+            "user_id": user_id,
+            "purpose": purpose,
+            "token_hash": token_hash,
+            "expires_at": expires_at.isoformat(),
+        }))
+
+    def consume(self, token_hash: str, purpose: str) -> int | None:
+        """Mark a valid, unused, unexpired link as used and return its user ID.
+
+        Returns None for an unknown, used, expired or wrong-purpose link.
+        """
+        response = self._run(
+            self.client.table("auth_tokens")
+            .select("id,user_id,expires_at")
+            .eq("token_hash", token_hash)
+            .eq("purpose", purpose)
+            .is_("used_at", "null")
+            .limit(1)
+        )
+        if not response.data:
+            return None
+        row = response.data[0]
+        if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):
+            return None
+        # Only succeeds if nobody used the link in the meantime.
+        used = self._run(
+            self.client.table("auth_tokens")
+            .update({"used_at": datetime.now(timezone.utc).isoformat()})
+            .eq("id", row["id"])
+            .is_("used_at", "null")
+        )
+        return int(row["user_id"]) if used.data else None
+
+    def revoke_all(self, user_id: int, purpose: str) -> None:
+        """Invalidate every unused link of this kind for the account."""
+        self._run(
+            self.client.table("auth_tokens")
+            .update({"used_at": datetime.now(timezone.utc).isoformat()})
+            .eq("user_id", user_id)
+            .eq("purpose", purpose)
+            .is_("used_at", "null")
+        )
+
+
+class RateLimiter(Repository):
+    """Shared request counters (public.hit_rate_limit in auth_upgrade.sql).
+
+    The counters live in the database, so every serverless instance sees the
+    same totals.
+    """
+
+    def hit(self, key: str, window_seconds: int, limit: int) -> bool:
+        """Count one hit. Return False when the key is over its limit."""
+        response = self._run(self.client.rpc("hit_rate_limit", {
+            "p_key": key[:300],
+            "p_window_seconds": window_seconds,
+            "p_limit": limit,
+        }))
+        return bool(response.data)
+
 
 @lru_cache(maxsize=1)
 def _create_client(url: str, key: str) -> Client:
@@ -210,3 +285,13 @@ def get_repository() -> GPURepository:
 def get_user_repository() -> UserRepository:
     """FastAPI dependency that gives each request a user repository."""
     return UserRepository(_get_client())
+
+
+def get_token_repository() -> TokenRepository:
+    """FastAPI dependency for one-time email links."""
+    return TokenRepository(_get_client())
+
+
+def get_rate_limiter() -> RateLimiter:
+    """FastAPI dependency for the shared rate limiter."""
+    return RateLimiter(_get_client())

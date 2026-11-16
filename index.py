@@ -5,14 +5,16 @@ database. Users sign up and log in to browse the catalog. Only accounts with
 the admin role can add, update or delete GPUs.
 """
 
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 import auth
+import chat
+import mailer
 from config import get_settings
 from database import (
     DatabaseUnavailableError,
@@ -20,23 +22,51 @@ from database import (
     DuplicateGPUError,
     GPURepository,
     InvalidGPUError,
+    RateLimiter,
+    TokenRepository,
     UserRepository,
+    get_rate_limiter,
     get_repository,
+    get_token_repository,
     get_user_repository,
 )
 from models import (
     GPU,
     MAX_ID,
     Credentials,
+    EmailOnly,
     GPUCreate,
     GPUList,
     GPUSearchResults,
     LoginResult,
+    Message,
+    ResetPassword,
     User,
+    VerifyEmail,
+)
+from security import (
+    SESSION_COOKIE,
+    client_ip,
+    enforce_rate_limit,
+    get_current_user,
+    require_admin,
 )
 
+logger = logging.getLogger("gpu_api")
+
 SERVICE_NAME = "GPU Finder API"
-VERSION = "2.0.0"
+VERSION = "2.1.0"
+
+# ---------- sign-in limits ----------
+MAX_FAILED_LOGINS = 5                   # wrong passwords before the account locks
+LOCKOUT = timedelta(minutes=15)
+VERIFY_LINK_LIFETIME = timedelta(hours=24)
+RESET_LINK_LIFETIME = timedelta(minutes=30)
+# (window seconds, max hits) per IP address or email
+LOGIN_PER_IP = (15 * 60, 20)
+REGISTER_PER_IP = (60 * 60, 5)
+EMAIL_LINKS_PER_IP = (60 * 60, 10)
+EMAIL_LINKS_PER_ADDRESS = (60 * 60, 3)
 
 app = FastAPI(
     title=SERVICE_NAME,
@@ -58,7 +88,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(chat.router)
+
 GPU_NOT_FOUND = "GPU not found."
+LINK_INVALID = "This link is invalid or has expired."
+# Same answer whether or not the email has an account.
+EMAIL_SENT_IF_EXISTS = "If that email belongs to an account, we've sent it a link."
 # The same message for a wrong email and a wrong password, so nobody can
 # use the login form to find out which emails have accounts.
 LOGIN_FAILED = "Invalid email or password."
@@ -109,35 +144,12 @@ def auth_not_configured(request: Request, error: auth.AuthNotConfiguredError):
     )
 
 
-# ---------- WHO IS CALLING ----------
-
-bearer_scheme = HTTPBearer(
-    auto_error=False,
-    description="Paste the access_token returned by POST /auth/login.",
-)
-
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-) -> dict:
-    """Return the logged-in user, or answer 401 if the token is missing or invalid."""
-    try:
-        if credentials is None:
-            raise auth.InvalidTokenError()
-        return auth.read_token(credentials.credentials)
-    except auth.InvalidTokenError:
-        raise HTTPException(
-            status_code=401,
-            detail="Log in to continue.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-
-def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    """Allow the request only for accounts with the admin role."""
-    if user["role"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin access is required.")
-    return user
+@app.exception_handler(mailer.EmailNotConfiguredError)
+def email_not_configured(request: Request, error: mailer.EmailNotConfiguredError):
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Email is not configured on the server."},
+    )
 
 
 GpuId = Path(ge=1, le=MAX_ID, description="The ID of the GPU.")
@@ -153,8 +165,15 @@ def home():
         "endpoints": [
             "GET /health",
             "POST /auth/register",
+            "POST /auth/verify",
+            "POST /auth/resend-verification",
             "POST /auth/login",
+            "POST /auth/logout",
+            "POST /auth/logout-all",
+            "POST /auth/forgot-password",
+            "POST /auth/reset-password",
             "GET /auth/me",
+            "POST /chat",
             "GET /gpus",
             "GET /gpus/search?q=keyword",
             "GET /gpus/{gpu_id}",
@@ -185,15 +204,108 @@ def health_check(repository: GPURepository = Depends(get_repository)):
     return body
 
 
+# ---------- helpers for the account routes ----------
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _send_link(tokens: TokenRepository, user: dict, purpose: str) -> None:
+    """Create a one-time link for the account and email it.
+
+    Older unused links of the same kind stop working, so only the newest
+    email in the inbox is valid.
+    """
+    lifetime = VERIFY_LINK_LIFETIME if purpose == "verify" else RESET_LINK_LIFETIME
+    secret, secret_hash = auth.new_link_secret()
+    tokens.revoke_all(user["id"], purpose)
+    tokens.create(user["id"], purpose, secret_hash, _now() + lifetime)
+    if purpose == "verify":
+        mailer.send_verification_email(user["email"], secret)
+    else:
+        mailer.send_password_reset_email(user["email"], secret)
+
+
+def _limit_email_links(request: Request, limiter: RateLimiter, email: str) -> None:
+    message = "Too many email requests. Try again in an hour."
+    enforce_rate_limit(limiter, f"email-ip:{client_ip(request)}", *EMAIL_LINKS_PER_IP, message)
+    enforce_rate_limit(limiter, f"email-to:{email}", *EMAIL_LINKS_PER_ADDRESS, message)
+
+
+def _set_session_cookie(response: Response, token: str, max_age: int) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        max_age=max_age,
+        httponly=True,       # page scripts cannot read it
+        secure=True,         # HTTPS only (browsers also allow it on localhost)
+        samesite="strict",   # never sent on requests started by other sites
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE, path="/", secure=True, httponly=True, samesite="strict")
+
+
 # ---------- SIGN UP ----------
 
 @app.post("/auth/register", response_model=User, status_code=201, tags=["Accounts"])
 def register(
     credentials: Credentials,
+    request: Request,
     users: UserRepository = Depends(get_user_repository),
+    tokens: TokenRepository = Depends(get_token_repository),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ):
+    """Create an account and email a confirmation link. The account can log
+    in only after the link is opened."""
+    enforce_rate_limit(
+        limiter, f"register-ip:{client_ip(request)}", *REGISTER_PER_IP,
+        "Too many sign-ups from this network. Try again in an hour.",
+    )
+    if not mailer.is_configured():
+        raise mailer.EmailNotConfiguredError()
     password_hash = auth.hash_password(credentials.password)
-    return users.create(credentials.email, password_hash)
+    user = users.create(credentials.email, password_hash)
+    try:
+        _send_link(tokens, user, "verify")
+    except Exception as error:
+        # The account exists; the user can ask for a new link later.
+        logger.error("Verification email failed: %s", type(error).__name__)
+    return user
+
+
+# ---------- VERIFY EMAIL ----------
+
+@app.post("/auth/verify", response_model=Message, tags=["Accounts"])
+def verify_email(
+    body: VerifyEmail,
+    users: UserRepository = Depends(get_user_repository),
+    tokens: TokenRepository = Depends(get_token_repository),
+):
+    user_id = tokens.consume(auth.hash_link_secret(body.token), "verify")
+    if user_id is None:
+        raise HTTPException(status_code=400, detail=LINK_INVALID)
+    users.update(user_id, {"email_verified": True})
+    return {"detail": "Email confirmed. You can sign in now."}
+
+
+@app.post("/auth/resend-verification", response_model=Message, status_code=202, tags=["Accounts"])
+def resend_verification(
+    body: EmailOnly,
+    request: Request,
+    users: UserRepository = Depends(get_user_repository),
+    tokens: TokenRepository = Depends(get_token_repository),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+):
+    _limit_email_links(request, limiter, body.email)
+    if not mailer.is_configured():
+        raise mailer.EmailNotConfiguredError()
+    user = users.get_for_login(body.email)
+    if user and not user.get("email_verified"):
+        _send_link(tokens, user, "verify")
+    return {"detail": EMAIL_SENT_IF_EXISTS}
 
 
 # ---------- LOG IN ----------
@@ -201,32 +313,129 @@ def register(
 @app.post("/auth/login", response_model=LoginResult, tags=["Accounts"])
 def login(
     credentials: Credentials,
+    request: Request,
+    response: Response,
     users: UserRepository = Depends(get_user_repository),
+    limiter: RateLimiter = Depends(get_rate_limiter),
 ):
+    """Check the password and start a session.
+
+    The browser receives an HttpOnly cookie. The token is also returned in
+    the body for API clients such as Swagger.
+    """
+    enforce_rate_limit(
+        limiter, f"login-ip:{client_ip(request)}", *LOGIN_PER_IP,
+        "Too many sign-in attempts. Try again in 15 minutes.",
+    )
     user = users.get_for_login(credentials.email)
+
+    locked_until = user.get("locked_until") if user else None
+    if locked_until and datetime.fromisoformat(locked_until) > _now():
+        raise HTTPException(
+            status_code=429,
+            detail="Too many wrong passwords. This account is locked for 15 minutes.",
+        )
+
     stored_hash = user["password_hash"] if user else DUMMY_HASH
     password_ok = auth.verify_password(credentials.password, stored_hash)
     if user is None or not password_ok:
+        if user is not None:
+            failed = int(user.get("failed_logins") or 0) + 1
+            if failed >= MAX_FAILED_LOGINS:
+                users.update(user["id"], {
+                    "failed_logins": 0,
+                    "locked_until": (_now() + LOCKOUT).isoformat(),
+                })
+            else:
+                users.update(user["id"], {"failed_logins": failed})
         raise HTTPException(status_code=401, detail=LOGIN_FAILED)
+
+    if user.get("failed_logins") or user.get("locked_until"):
+        users.update(user["id"], {"failed_logins": 0, "locked_until": None})
+
+    if not user.get("email_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail="Confirm your email first. Check your inbox for the link.",
+        )
+
     token, expires_in = auth.create_token(user)
+    _set_session_cookie(response, token, expires_in)
     return {"access_token": token, "expires_in": expires_in, "user": user}
+
+
+# ---------- LOG OUT ----------
+
+@app.post("/auth/logout", status_code=204, tags=["Accounts"])
+def logout():
+    """End the session in this browser."""
+    response = Response(status_code=204)
+    _clear_session_cookie(response)
+    return response
+
+
+@app.post("/auth/logout-all", status_code=204, tags=["Accounts"])
+def logout_everywhere(
+    user: dict = Depends(get_current_user),
+    users: UserRepository = Depends(get_user_repository),
+):
+    """End every session of this account on every device."""
+    users.update(user["id"], {"token_version": int(user.get("token_version", 0)) + 1})
+    response = Response(status_code=204)
+    _clear_session_cookie(response)
+    return response
+
+
+# ---------- PASSWORD RESET ----------
+
+@app.post("/auth/forgot-password", response_model=Message, status_code=202, tags=["Accounts"])
+def forgot_password(
+    body: EmailOnly,
+    request: Request,
+    users: UserRepository = Depends(get_user_repository),
+    tokens: TokenRepository = Depends(get_token_repository),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+):
+    """Email a password reset link. Answers the same way for unknown emails."""
+    _limit_email_links(request, limiter, body.email)
+    if not mailer.is_configured():
+        raise mailer.EmailNotConfiguredError()
+    user = users.get_for_login(body.email)
+    if user:
+        _send_link(tokens, user, "reset")
+    return {"detail": EMAIL_SENT_IF_EXISTS}
+
+
+@app.post("/auth/reset-password", response_model=Message, tags=["Accounts"])
+def reset_password(
+    body: ResetPassword,
+    users: UserRepository = Depends(get_user_repository),
+    tokens: TokenRepository = Depends(get_token_repository),
+):
+    """Set a new password from an emailed link. Signs the account out everywhere."""
+    user_id = tokens.consume(auth.hash_link_secret(body.token), "reset")
+    if user_id is None:
+        raise HTTPException(status_code=400, detail=LINK_INVALID)
+    account = users.get(user_id)
+    if account is None:
+        raise HTTPException(status_code=400, detail=LINK_INVALID)
+    users.update(user_id, {
+        "password_hash": auth.hash_password(body.password),
+        "token_version": int(account.get("token_version", 0)) + 1,
+        "failed_logins": 0,
+        "locked_until": None,
+        # Opening the emailed link proves the address works.
+        "email_verified": True,
+    })
+    tokens.revoke_all(user_id, "reset")
+    return {"detail": "Password changed. Sign in with your new password."}
 
 
 # ---------- CURRENT ACCOUNT ----------
 
 @app.get("/auth/me", response_model=User, tags=["Accounts"])
-def current_account(
-    user: dict = Depends(get_current_user),
-    users: UserRepository = Depends(get_user_repository),
-):
-    account = users.get(user["id"])
-    if account is None:
-        raise HTTPException(
-            status_code=401,
-            detail="Log in to continue.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    return account
+def current_account(user: dict = Depends(get_current_user)):
+    return user
 
 
 # ---------- GET ALL GPUS ----------
