@@ -106,6 +106,17 @@ def test_cookie_writes_need_the_csrf_header(anonymous, api):
     assert allowed.status_code == 201
 
 
+def test_cookie_writes_from_the_same_origin_are_allowed(anonymous, api):
+    # Swagger UI at /docs: the browser marks its requests same-origin.
+    anonymous.post("/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+    for site in ("cross-site", "same-site", "none"):
+        blocked = anonymous.post("/gpus", json=make_gpu(model="RTX Site"), headers={"Sec-Fetch-Site": site})
+        assert blocked.status_code == 403
+    assert api.write_requests == []
+    same = anonymous.post("/gpus", json=make_gpu(model="RTX Site"), headers={"Sec-Fetch-Site": "same-origin"})
+    assert same.status_code == 201
+
+
 def test_logout_clears_the_cookie(anonymous):
     anonymous.post("/auth/login", json={"email": USER_EMAIL, "password": USER_PASSWORD})
     response = anonymous.post("/auth/logout")

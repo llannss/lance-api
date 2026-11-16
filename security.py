@@ -19,11 +19,22 @@ from database import RateLimiter, UserRepository, get_user_repository
 # "Authorization: Bearer <token>" instead.
 SESSION_COOKIE = "gpu_session"
 
-# Cookie-authenticated writes must carry this header. Browsers only let a
-# page add custom headers to same-origin requests (or ones CORS allows),
-# so another website cannot forge a write with the user's cookie.
+# Cookie-authenticated writes must prove they came from a page on this site,
+# so another website cannot forge a write with the user's cookie. Either is
+# accepted:
+# - X-Requested-With: browsers only let a page add custom headers to
+#   same-origin requests (or ones CORS allows). The website sends it.
+# - Sec-Fetch-Site: same-origin: set by the browser itself and impossible for
+#   page scripts to change. Covers Swagger UI at /docs after /auth/login.
 CSRF_HEADER = "x-requested-with"
+FETCH_SITE_HEADER = "sec-fetch-site"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _is_same_site_request(request: Request) -> bool:
+    return bool(request.headers.get(CSRF_HEADER)) or (
+        request.headers.get(FETCH_SITE_HEADER) == "same-origin"
+    )
 
 bearer_scheme = HTTPBearer(
     auto_error=False,
@@ -59,8 +70,11 @@ def get_current_user(
     except auth.InvalidTokenError:
         raise _not_logged_in()
 
-    if from_cookie and request.method not in SAFE_METHODS and not request.headers.get(CSRF_HEADER):
-        raise HTTPException(status_code=403, detail="Missing X-Requested-With header.")
+    if from_cookie and request.method not in SAFE_METHODS and not _is_same_site_request(request):
+        raise HTTPException(
+            status_code=403,
+            detail="Changes signed in with the session cookie must come from this site.",
+        )
 
     # The token only says who the caller was when they logged in. The
     # database says who they are now.
