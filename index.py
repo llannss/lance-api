@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 import auth
 import chat
+import favorites
 import images
 import mailer
 from config import get_settings
@@ -93,6 +94,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router)
+app.include_router(favorites.router)
 
 GPU_NOT_FOUND = "GPU not found."
 LINK_INVALID = "This link is invalid or has expired."
@@ -178,6 +180,9 @@ def home():
             "POST /auth/reset-password",
             "GET /auth/me",
             "POST /chat",
+            "GET /me/favorites",
+            "PUT /me/favorites/{gpu_id}",
+            "DELETE /me/favorites/{gpu_id}",
             "GET /gpus",
             "GET /gpus/search?q=keyword",
             "GET /gpus/{gpu_id}",

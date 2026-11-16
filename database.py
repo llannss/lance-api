@@ -118,6 +118,14 @@ class GPURepository(Repository):
         )
         return response.data[0] if response.data else None
 
+    def get_many(self, gpu_ids: list[int]) -> list[dict]:
+        """The GPUs with these IDs (missing IDs are simply left out)."""
+        if not gpu_ids:
+            return []
+        return self._fetch_all(
+            lambda: self.client.table("gpus").select(COLUMNS, count="exact").in_("id", gpu_ids)
+        )
+
     def search(self, keyword: str) -> list[dict]:
         """Case-insensitive keyword match against the search_text column."""
         # Make %, _ and \ match themselves instead of acting as wildcards.
@@ -156,6 +164,39 @@ class GPURepository(Repository):
             self.client.table("gpus").update({"image_url": image_url}).eq("id", gpu_id)
         )
         return response.data[0] if response.data else None
+
+
+class DuplicateFavoriteError(Exception):
+    """The account already has this GPU as a favorite."""
+
+
+class FavoriteRepository(Repository):
+    """Favorite GPUs of each account, in public.favorites."""
+
+    duplicate_error = DuplicateFavoriteError
+
+    def list_ids(self, user_id: int) -> list[int]:
+        """The account's favorite GPU IDs, newest first."""
+        response = self._run(
+            self.client.table("favorites")
+            .select("gpu_id")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(1000)
+        )
+        return [int(row["gpu_id"]) for row in response.data or []]
+
+    def add(self, user_id: int, gpu_id: int) -> None:
+        """Save a favorite. Saving one that already exists changes nothing."""
+        try:
+            self._run(self.client.table("favorites").insert({"user_id": user_id, "gpu_id": gpu_id}))
+        except DuplicateFavoriteError:
+            pass
+
+    def remove(self, user_id: int, gpu_id: int) -> None:
+        self._run(
+            self.client.table("favorites").delete().eq("user_id", user_id).eq("gpu_id", gpu_id)
+        )
 
 
 class ImageStore:
@@ -352,6 +393,11 @@ def get_token_repository() -> TokenRepository:
 def get_rate_limiter() -> RateLimiter:
     """FastAPI dependency for the shared rate limiter."""
     return RateLimiter(_get_client())
+
+
+def get_favorite_repository() -> FavoriteRepository:
+    """FastAPI dependency for saved favorite GPUs."""
+    return FavoriteRepository(_get_client())
 
 
 def get_image_store() -> ImageStore:

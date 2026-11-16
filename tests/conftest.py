@@ -16,8 +16,10 @@ from supabase import ClientOptions, create_client
 import auth
 import mailer
 from database import (
+    FavoriteRepository,
     GPURepository,
     ImageStore,
+    get_favorite_repository,
     get_image_store,
     RateLimiter,
     TokenRepository,
@@ -123,6 +125,8 @@ class FakeDataAPI:
         # Lower a limit in a test, e.g. {"login-ip": 2}. Keyed by key prefix.
         self.rate_limit_override: dict[str, int] = {}
         self.files: dict[str, bytes] = {}   # the gpu-images Storage bucket
+        self.favorites: list[dict] = []     # the favorites table
+        self.clock = 0                      # increasing created_at for favorites
         self.storage_failure = False
         self.requests: list[tuple[str, str]] = []
         self.max_rows: int | None = None   # server page limit, like Supabase "Max rows"
@@ -205,6 +209,30 @@ class FakeDataAPI:
             for row in rows:
                 row.update(changes)
             return httpx.Response(200, json=rows)
+        return httpx.Response(405, json={"message": "method not allowed"})
+
+    def handle_favorites(self, request: httpx.Request) -> httpx.Response:
+        """The favorites table: list (newest first), insert, delete."""
+        params = request.url.params
+        if request.method == "GET":
+            rows = self.filter_rows(list(self.favorites), params)
+            rows.sort(key=lambda r: r["created_at"], reverse=True)
+            return httpx.Response(200, json=self.pick(rows, params))
+        if request.method == "POST":
+            new = json.loads(request.content)
+            if any(r["user_id"] == new["user_id"] and r["gpu_id"] == new["gpu_id"] for r in self.favorites):
+                return httpx.Response(409, json={
+                    "code": "23505", "details": "Key (user_id, gpu_id) already exists.", "hint": None,
+                    "message": 'duplicate key value violates unique constraint "favorites_pkey"',
+                })
+            self.clock += 1
+            row = {**new, "created_at": f"2026-01-01T00:00:{self.clock:02d}+00:00"}
+            self.favorites.append(row)
+            return httpx.Response(201, json=[row])
+        if request.method == "DELETE":
+            gone = self.filter_rows(list(self.favorites), params)
+            self.favorites = [r for r in self.favorites if r not in gone]
+            return httpx.Response(200, json=gone)
         return httpx.Response(405, json={"message": "method not allowed"})
 
     @staticmethod
@@ -291,8 +319,12 @@ class FakeDataAPI:
         rows = list(self.rows)
         if "id" in params:
             operator, value = params["id"].split(".", 1)
-            assert operator == "eq"
-            rows = [row for row in rows if row["id"] == int(value)]
+            if operator == "in":
+                wanted = {int(v) for v in value.strip("()").split(",") if v}
+                rows = [row for row in rows if row["id"] in wanted]
+            else:
+                assert operator == "eq"
+                rows = [row for row in rows if row["id"] == int(value)]
         if "search_text" in params:
             operator, value = params["search_text"].split(".", 1)
             assert operator == "ilike"
@@ -317,6 +349,8 @@ class FakeDataAPI:
             return self.handle_users(request)
         if request.url.path == "/rest/v1/auth_tokens":
             return self.handle_tokens(request)
+        if request.url.path == "/rest/v1/favorites":
+            return self.handle_favorites(request)
         if request.url.path.startswith("/rest/v1/rpc/"):
             return self.handle_rpc(request)
         assert request.url.path == "/rest/v1/gpus"
@@ -430,6 +464,7 @@ def anonymous(api):
     app.dependency_overrides[get_token_repository] = lambda: TokenRepository(supabase)
     app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(supabase)
     app.dependency_overrides[get_image_store] = lambda: ImageStore(supabase)
+    app.dependency_overrides[get_favorite_repository] = lambda: FavoriteRepository(supabase)
     # https so the client keeps and sends the Secure session cookie.
     with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client
