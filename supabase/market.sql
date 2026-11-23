@@ -100,3 +100,36 @@ on conflict (id) do update
     set public = excluded.public,
         file_size_limit = excluded.file_size_limit,
         allowed_mime_types = excluded.allowed_mime_types;
+
+
+-- ---------- public names ----------
+-- The name buyers and sellers see, so the Marketplace never shows any part
+-- of anyone's email. Set once from the Marketplace; null until then.
+
+alter table public.users
+    add column if not exists display_name text
+        check (display_name is null or char_length(display_name) between 2 and 40);
+grant update (display_name) on table public.users to service_role;
+
+
+-- ---------- reports ----------
+-- Members flag listings (a scam, the wrong item, offensive content); admins
+-- see them on the admin page and dismiss them or delete the listing.
+
+create table if not exists public.listing_reports (
+    id bigint generated always as identity primary key,
+    listing_id bigint not null references public.listings (id) on delete cascade,
+    reporter_id bigint not null references public.users (id) on delete cascade,
+    reason text not null
+        check (reason in ('scam', 'wrong_item', 'offensive', 'sold_elsewhere', 'other')),
+    details text not null default '' check (char_length(details) <= 500),
+    created_at timestamptz not null default now(),
+    -- one report per member and listing
+    unique (listing_id, reporter_id)
+);
+
+create index if not exists listing_reports_created_idx on public.listing_reports (created_at desc);
+
+alter table public.listing_reports enable row level security;
+revoke all on table public.listing_reports from anon, authenticated, service_role;
+grant select, insert, delete on table public.listing_reports to service_role;

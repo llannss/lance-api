@@ -76,7 +76,9 @@ def test_create_and_read_a_listing(client):
     assert created.status_code == 201, created.text
     listing = created.json()
     assert listing["status"] == "active"
-    assert listing["seller"] == {"id": 1, "name": "user"}
+    assert listing["seller"]["id"] == 1
+    assert listing["seller"]["name"] == "GPU Nexus member"      # no part of the email, ever
+    assert "user" not in listing["seller"]["name"]
     assert listing["is_mine"] is True
     assert listing["gpu"]["model"]
     assert client.get(f"/listings/{listing['id']}").json()["title"] == "RTX 3080 10GB, used for one year"
@@ -153,7 +155,7 @@ def test_buyer_and_seller_message_each_other(client, admin):
     assert client.get("/me/unread").json() == {"unread": 1}
     inbox = client.get("/me/conversations").json()
     assert inbox["conversations"][0]["role"] == "selling"
-    assert inbox["conversations"][0]["with"]["name"] == "admin"
+    assert inbox["conversations"][0]["with"]["name"] == "GPU Nexus member"
     assert inbox["conversations"][0]["last_body"] == "Is it still available?"
 
     # opening it marks it read
@@ -189,3 +191,45 @@ def test_message_rules(client, admin):
     client.patch(f"/listings/{listing['id']}", json={"status": "sold"})
     assert client.post(f"/listings/{listing['id']}/messages", json={"body": "hi"}, headers=admin).status_code == 409
     assert client.post("/listings/999/messages", json={"body": "hi"}, headers=admin).status_code == 404
+
+
+# ---------- names, seller record, reports ----------
+
+def test_members_choose_the_name_others_see(client, admin):
+    assert client.get("/me/profile").json() == {"display_name": None}
+    assert client.put("/me/profile", json={"display_name": "x"}).status_code == 422
+    assert client.put("/me/profile", json={"display_name": "me@mail.com"}).status_code == 422
+    saved = client.put("/me/profile", json={"display_name": "  Lans   PC  Parts "})
+    assert saved.json() == {"display_name": "Lans PC Parts"}
+    listing = create(client).json()
+    seen_by_buyer = client.get(f"/listings/{listing['id']}", headers=admin).json()
+    assert seen_by_buyer["seller"]["name"] == "Lans PC Parts"
+
+
+def test_a_listing_shows_the_sellers_record(client):
+    first = create(client).json()
+    sold = create(client).json()
+    client.patch(f"/listings/{sold['id']}", json={"status": "sold"})
+    seller = client.get(f"/listings/{first['id']}").json()["seller"]
+    assert seller["for_sale"] == 1 and seller["sold"] == 1
+    assert seller["member_since"]
+
+
+def test_reports_reach_the_admins(client, admin):
+    listing = create(client).json()
+    assert client.post(f"/listings/{listing['id']}/report", json={"reason": "scam"}).status_code == 409
+    assert client.post(f"/listings/{listing['id']}/report", json={"reason": "nope"}, headers=admin).status_code == 422
+    sent = client.post(f"/listings/{listing['id']}/report", json={"reason": "scam", "details": "Asks for GCash first"},
+                       headers=admin)
+    assert sent.status_code == 201
+    # reporting twice is harmless
+    assert client.post(f"/listings/{listing['id']}/report", json={"reason": "scam"}, headers=admin).status_code == 201
+
+    assert client.get("/admin/reports").status_code == 403          # regular members can't see reports
+    reports = client.get("/admin/reports", headers=admin).json()["reports"]
+    assert len(reports) == 1
+    assert reports[0]["listing"]["title"] == listing["title"]
+    assert reports[0]["details"] == "Asks for GCash first"
+
+    assert client.delete(f"/admin/reports/{reports[0]['id']}", headers=admin).status_code == 204
+    assert client.get("/admin/reports", headers=admin).json()["reports"] == []

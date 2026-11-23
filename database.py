@@ -407,6 +407,31 @@ class ListingRepository(Repository):
         self._run(self.client.table("listings").delete().eq("id", listing_id))
 
 
+class DuplicateReportError(Exception):
+    """This member already reported this listing."""
+
+
+class ReportRepository(Repository):
+    """Members' reports about listings, in public.listing_reports."""
+
+    duplicate_error = DuplicateReportError
+
+    def add(self, row: dict) -> dict:
+        response = self._run(self.client.table("listing_reports").insert(row))
+        if not response.data:
+            raise DatabaseUnavailableError()
+        return response.data[0]
+
+    def list(self, limit: int = 100) -> list[dict]:
+        response = self._run(
+            self.client.table("listing_reports").select("*").order("created_at", desc=True).limit(limit)
+        )
+        return response.data or []
+
+    def delete(self, report_id: int) -> None:
+        self._run(self.client.table("listing_reports").delete().eq("id", report_id))
+
+
 class ConversationRepository(Repository):
     """Buyer-seller conversations, in public.conversations (one per listing and buyer)."""
 
@@ -467,13 +492,17 @@ class UserRepository(Repository):
 
     duplicate_error = DuplicateEmailError
 
-    def emails(self, user_ids: list[int]) -> dict[int, str]:
-        """id -> email for the given accounts (for seller and buyer names)."""
+    def profiles(self, user_ids: list[int]) -> dict[int, dict]:
+        """id -> {display_name, created_at} for Marketplace names. Only the
+        Marketplace reads display_name (added by market.sql), so sign-in keeps
+        working before that migration runs."""
         ids = sorted({int(i) for i in user_ids})
         if not ids:
             return {}
-        response = self._run(self.client.table("users").select("id,email").in_("id", ids))
-        return {int(row["id"]): row["email"] for row in response.data or []}
+        response = self._run(
+            self.client.table("users").select("id,display_name,created_at").in_("id", ids)
+        )
+        return {int(row["id"]): row for row in response.data or []}
 
     def get(self, user_id: int) -> dict | None:
         response = self._run(
@@ -653,6 +682,11 @@ def get_conversation_repository() -> ConversationRepository:
 def get_message_repository() -> MessageRepository:
     """FastAPI dependency for Marketplace messages."""
     return MessageRepository(_get_client())
+
+
+def get_report_repository() -> ReportRepository:
+    """FastAPI dependency for Marketplace listing reports."""
+    return ReportRepository(_get_client())
 
 
 def get_listing_photo_store() -> ListingPhotoStore:

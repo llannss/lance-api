@@ -18,6 +18,9 @@ from pydantic import BaseModel, Field, field_validator
 import images
 from database import (
     ConversationRepository,
+    DuplicateReportError,
+    ReportRepository,
+    get_report_repository,
     GPURepository,
     ListingPhotoStore,
     ListingRepository,
@@ -33,7 +36,7 @@ from database import (
     get_user_repository,
 )
 from models import MAX_ID
-from security import enforce_rate_limit, get_current_user
+from security import enforce_rate_limit, get_current_user, require_admin
 
 router = APIRouter(tags=["Marketplace"])
 
@@ -44,6 +47,8 @@ LISTINGS_PER_PAGE = 60
 PHOTO_UPLOADS = (60 * 60, 60)
 NEW_LISTINGS = (60 * 60, 10)
 NEW_MESSAGES = (10 * 60, 40)
+NEW_REPORTS = (24 * 60 * 60, 20)
+NO_NAME = "GPU Nexus member"
 
 LISTING_NOT_FOUND = "Listing not found."
 CONVERSATION_NOT_FOUND = "Conversation not found."
@@ -88,6 +93,30 @@ class ListingUpdate(BaseModel):
         return value.strip() if isinstance(value, str) else value
 
 
+class ProfileIn(BaseModel):
+    display_name: str = Field(min_length=2, max_length=40)
+
+    @field_validator("display_name")
+    @classmethod
+    def clean(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if len(value) < 2:
+            raise ValueError("Use at least 2 characters.")
+        if "@" in value:
+            raise ValueError("Don't use an email address as your name.")
+        return value
+
+
+class ReportIn(BaseModel):
+    reason: Literal["scam", "wrong_item", "offensive", "sold_elsewhere", "other"]
+    details: str = Field(default="", max_length=500)
+
+    @field_validator("details")
+    @classmethod
+    def strip_details(cls, value: str) -> str:
+        return value.strip()
+
+
 class MessageIn(BaseModel):
     body: str = Field(min_length=1, max_length=2000)
 
@@ -106,9 +135,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _name(email: str | None) -> str:
-    """What other people see: the part of the email before the @."""
-    return (email or "").split("@")[0] or "GPU Nexus member"
+def _name(profile: dict | None) -> str:
+    """What other people see: the member's chosen name, never their email."""
+    return (profile or {}).get("display_name") or NO_NAME
 
 
 def _check_photos(urls: list[str], user_id: int) -> list[str]:
@@ -139,12 +168,16 @@ def _present(rows: list[dict], user: dict, gpus: GPURepository, users: UserRepos
     """Listings as the Marketplace shows them: with the GPU and the seller's name."""
     gpu_ids = [r["gpu_id"] for r in rows if r.get("gpu_id")]
     by_gpu = {g["id"]: g for g in gpus.get_many(gpu_ids)} if gpu_ids else {}
-    emails = users.emails([r["seller_id"] for r in rows])
+    profiles = users.profiles([r["seller_id"] for r in rows])
     return [{
         **row,
         "price": float(row["price"]),
         "gpu": _gpu_summary(by_gpu.get(row.get("gpu_id"))),
-        "seller": {"id": row["seller_id"], "name": _name(emails.get(int(row["seller_id"])))},
+        "seller": {
+            "id": row["seller_id"],
+            "name": _name(profiles.get(int(row["seller_id"]))),
+            "member_since": (profiles.get(int(row["seller_id"])) or {}).get("created_at"),
+        },
         "is_mine": int(row["seller_id"]) == int(user["id"]),
     } for row in rows]
 
@@ -194,7 +227,12 @@ def get_listing(
     listing = listings.get(listing_id)
     if listing is None:
         raise HTTPException(status_code=404, detail=LISTING_NOT_FOUND)
-    return _present([listing], user, gpus, users)[0]
+    item = _present([listing], user, gpus, users)[0]
+    # the seller's record, so buyers can judge who they're dealing with
+    _, for_sale = listings.list(status="active", seller_id=listing["seller_id"], limit=1)
+    _, sold = listings.list(status="sold", seller_id=listing["seller_id"], limit=1)
+    item["seller"].update({"for_sale": for_sale, "sold": sold})
+    return item
 
 
 @router.post("/listings", status_code=201)
@@ -320,7 +358,7 @@ def _conversation_summaries(rows: list[dict], user: dict, listings: ListingRepos
         if listing:
             by_listing[listing_id] = listing
     other_ids = [r["seller_id"] if _side(r, user) == "buyer" else r["buyer_id"] for r in rows]
-    emails = users.emails(other_ids)
+    profiles = users.profiles(other_ids)
     out = []
     for row, other in zip(rows, other_ids):
         listing = by_listing.get(row["listing_id"]) or {}
@@ -328,7 +366,7 @@ def _conversation_summaries(rows: list[dict], user: dict, listings: ListingRepos
         out.append({
             "id": row["id"],
             "role": "buying" if _side(row, user) == "buyer" else "selling",
-            "with": {"id": other, "name": _name(emails.get(int(other)))},
+            "with": {"id": other, "name": _name(profiles.get(int(other)))},
             "listing": {
                 "id": row["listing_id"],
                 "title": listing.get("title", "Deleted listing"),
@@ -453,3 +491,81 @@ def reply(
     conversation = _participant(conversations.get(conversation_id), user)
     message = _post(conversation, user, body.body, conversations, messages)
     return {"id": message["id"], "body": message["body"], "created_at": message.get("created_at"), "mine": True}
+
+
+# ---------- your public name ----------
+
+@router.get("/me/profile")
+def my_profile(
+    user: dict = Depends(get_current_user),
+    users: UserRepository = Depends(get_user_repository),
+):
+    """Your Marketplace name (null until you choose one)."""
+    profile = users.profiles([user["id"]]).get(int(user["id"])) or {}
+    return {"display_name": profile.get("display_name")}
+
+
+@router.put("/me/profile")
+def set_profile(
+    body: ProfileIn,
+    user: dict = Depends(get_current_user),
+    users: UserRepository = Depends(get_user_repository),
+):
+    """Choose the name buyers and sellers see instead of anything from your email."""
+    users.update(user["id"], {"display_name": body.display_name})
+    return {"display_name": body.display_name}
+
+
+# ---------- reports ----------
+
+@router.post("/listings/{listing_id}/report", status_code=201)
+def report_listing(
+    body: ReportIn,
+    listing_id: int = ListingId,
+    user: dict = Depends(get_current_user),
+    listings: ListingRepository = Depends(get_listing_repository),
+    reports: ReportRepository = Depends(get_report_repository),
+    limiter: RateLimiter = Depends(get_rate_limiter),
+):
+    """Flag a listing for the admins. Reporting the same listing twice is harmless."""
+    enforce_rate_limit(limiter, f"report:{user['id']}", *NEW_REPORTS,
+                       "You've sent a lot of reports today. Try again tomorrow.")
+    listing = listings.get(listing_id)
+    if listing is None:
+        raise HTTPException(status_code=404, detail=LISTING_NOT_FOUND)
+    if int(listing["seller_id"]) == int(user["id"]):
+        raise HTTPException(status_code=409, detail="You can't report your own listing.")
+    try:
+        reports.add({"listing_id": listing_id, "reporter_id": user["id"],
+                     "reason": body.reason, "details": body.details})
+    except DuplicateReportError:
+        pass
+    return {"message": "Thanks. An admin will look at this listing."}
+
+
+@router.get("/admin/reports", dependencies=[Depends(require_admin)])
+def list_reports(
+    reports: ReportRepository = Depends(get_report_repository),
+    listings: ListingRepository = Depends(get_listing_repository),
+):
+    """Open reports, newest first, with the listing they're about."""
+    rows = reports.list()
+    out = []
+    for row in rows:
+        listing = listings.get(row["listing_id"]) or {}
+        photos = listing.get("photos") or []
+        out.append({**row, "listing": {
+            "id": row["listing_id"], "title": listing.get("title", "Deleted listing"),
+            "status": listing.get("status"), "cover": photos[0] if photos else None,
+        }})
+    return {"reports": out}
+
+
+@router.delete("/admin/reports/{report_id}", status_code=204, dependencies=[Depends(require_admin)])
+def dismiss_report(
+    report_id: int = Path(ge=1, le=MAX_ID),
+    reports: ReportRepository = Depends(get_report_repository),
+):
+    """Dismiss a report (the listing stays)."""
+    reports.delete(report_id)
+    return Response(status_code=204)

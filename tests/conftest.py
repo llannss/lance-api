@@ -17,6 +17,8 @@ import auth
 import mailer
 from database import (
     ConversationRepository,
+    ReportRepository,
+    get_report_repository,
     ListingPhotoStore,
     ListingRepository,
     MessageRepository,
@@ -181,6 +183,7 @@ class FakeDataAPI:
             "token_version": 0,
             "failed_logins": 0,
             "locked_until": None,
+            "display_name": None,
         }
         self.next_user_id += 1
         return user
@@ -263,6 +266,7 @@ class FakeDataAPI:
         "listings": ((), True),
         "conversations": (("listing_id", "buyer_id"), True),
         "messages": ((), True),
+        "listing_reports": (("listing_id", "reporter_id"), True),
     }
 
     # Column defaults from supabase/market.sql (PostgREST returns them on insert)
@@ -407,7 +411,8 @@ class FakeDataAPI:
         if request.method == "PATCH":
             changes = json.loads(request.content)
             # Mirror the column grants in auth_upgrade.sql.
-            allowed = {"password_hash", "email_verified", "token_version", "failed_logins", "locked_until"}
+            allowed = {"password_hash", "email_verified", "token_version", "failed_logins", "locked_until",
+                       "display_name"}
             assert set(changes) <= allowed, f"update of a column the backend may not change: {changes}"
             rows = self.filter_rows(list(self.users), params)
             for row in rows:
@@ -573,6 +578,7 @@ def anonymous(api):
     app.dependency_overrides[get_conversation_repository] = lambda: ConversationRepository(supabase)
     app.dependency_overrides[get_message_repository] = lambda: MessageRepository(supabase)
     app.dependency_overrides[get_listing_photo_store] = lambda: ListingPhotoStore(supabase)
+    app.dependency_overrides[get_report_repository] = lambda: ReportRepository(supabase)
     app.dependency_overrides[get_favorite_repository] = lambda: FavoriteRepository(supabase)
     app.dependency_overrides[get_recent_repository] = lambda: RecentRepository(supabase)
     app.dependency_overrides[get_comparison_repository] = lambda: ComparisonRepository(supabase)
