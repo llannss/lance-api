@@ -473,8 +473,13 @@ def current_account(user: dict = Depends(get_current_user)):
     dependencies=[Depends(require_reader)],
     tags=["GPUs"],
 )
-def get_gpus(repository: GPURepository = Depends(get_repository)):
+def get_gpus(response: Response, repository: GPURepository = Depends(get_repository)):
     rows = repository.list_all()
+    # The catalog is the same for every reader, so a browser may keep it for a
+    # minute when it asks to (the Marketplace does; the admin page and Finder
+    # send no-store and always get a fresh copy). "private": never cached by
+    # Vercel's shared edge, which would skip the sign-in check.
+    response.headers["Cache-Control"] = "private, max-age=60"
     return {"count": len(rows), "gpus": rows}
 
 

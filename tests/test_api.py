@@ -489,3 +489,9 @@ def test_list_reads_every_row_when_server_limits_page_size(client, api):
 def test_search_reads_every_match_when_server_limits_page_size(client, api):
     api.max_rows = 1
     assert client.get("/gpus/search", params={"q": "geforce"}).json()["count"] == 3
+
+
+def test_catalog_may_be_kept_briefly_by_the_browser_only(client):
+    response = client.get("/gpus")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "private, max-age=60"
