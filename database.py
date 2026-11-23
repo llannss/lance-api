@@ -24,6 +24,8 @@ COLUMNS = (
 
 # Supabase Storage bucket for GPU pictures (created by supabase/storage.sql).
 IMAGE_BUCKET = "gpu-images"
+# Marketplace listing photos (created by supabase/market.sql).
+LISTING_PHOTO_BUCKET = "listing-photos"
 
 # The account columns the API returns. password_hash is left out on purpose.
 USER_COLUMNS = "id,email,role,created_at,email_verified,token_version,failed_logins,locked_until"
@@ -322,8 +324,10 @@ class ImageStore:
     does, which keeps browser caches correct.
     """
 
+    bucket_name = IMAGE_BUCKET
+
     def __init__(self, client: Client):
-        self.bucket = client.storage.from_(IMAGE_BUCKET)
+        self.bucket = client.storage.from_(self.bucket_name)
 
     def upload(self, path: str, data: bytes) -> str:
         """Store a WebP file and return its public URL."""
@@ -349,21 +353,127 @@ class ImageStore:
         except Exception as error:
             logger.warning("Could not delete old picture: %s", type(error).__name__)
 
-    @staticmethod
-    def path_from_url(url: str | None) -> str | None:
+    @classmethod
+    def path_from_url(cls, url: str | None) -> str | None:
         """'.../storage/v1/object/public/gpu-images/x.webp' -> 'x.webp'.
         Returns None for anything that is not a file in our bucket."""
-        marker = f"/storage/v1/object/public/{IMAGE_BUCKET}/"
+        marker = f"/storage/v1/object/public/{cls.bucket_name}/"
         if not url or marker not in url:
             return None
         path = url.split(marker, 1)[1].split("?", 1)[0]
         return path if path and "/" not in path and ".." not in path else None
 
 
+class ListingPhotoStore(ImageStore):
+    """Marketplace photos in the public listing-photos bucket. Files are named
+    u<seller id>-<random>.webp, so the API can tell whose photo a URL is."""
+
+    bucket_name = LISTING_PHOTO_BUCKET
+
+
+class ListingRepository(Repository):
+    """Marketplace listings, in public.listings."""
+
+    def list(self, *, status: str | None = None, gpu_id: int | None = None,
+             seller_id: int | None = None, limit: int = 60, offset: int = 0) -> tuple[list[dict], int]:
+        """Matching listings, newest first, and how many match in total."""
+        query = self.client.table("listings").select("*", count="exact")
+        if status:
+            query = query.eq("status", status)
+        if gpu_id is not None:
+            query = query.eq("gpu_id", gpu_id)
+        if seller_id is not None:
+            query = query.eq("seller_id", seller_id)
+        response = self._run(query.order("created_at", desc=True).range(offset, offset + limit - 1))
+        rows = response.data or []
+        return rows, response.count if response.count is not None else len(rows)
+
+    def get(self, listing_id: int) -> dict | None:
+        response = self._run(self.client.table("listings").select("*").eq("id", listing_id).limit(1))
+        return response.data[0] if response.data else None
+
+    def create(self, row: dict) -> dict:
+        response = self._run(self.client.table("listings").insert(row))
+        if not response.data:
+            raise DatabaseUnavailableError()
+        return response.data[0]
+
+    def update(self, listing_id: int, changes: dict) -> dict | None:
+        changes = {**changes, "updated_at": datetime.now(timezone.utc).isoformat()}
+        response = self._run(self.client.table("listings").update(changes).eq("id", listing_id))
+        return response.data[0] if response.data else None
+
+    def delete(self, listing_id: int) -> None:
+        self._run(self.client.table("listings").delete().eq("id", listing_id))
+
+
+class ConversationRepository(Repository):
+    """Buyer-seller conversations, in public.conversations (one per listing and buyer)."""
+
+    def get(self, conversation_id: int) -> dict | None:
+        response = self._run(self.client.table("conversations").select("*").eq("id", conversation_id).limit(1))
+        return response.data[0] if response.data else None
+
+    def find(self, listing_id: int, buyer_id: int) -> dict | None:
+        response = self._run(
+            self.client.table("conversations").select("*")
+            .eq("listing_id", listing_id).eq("buyer_id", buyer_id).limit(1)
+        )
+        return response.data[0] if response.data else None
+
+    def create(self, row: dict) -> dict:
+        response = self._run(self.client.table("conversations").insert(row))
+        if not response.data:
+            raise DatabaseUnavailableError()
+        return response.data[0]
+
+    def for_user(self, user_id: int, limit: int = 100) -> list[dict]:
+        """Every conversation the account is in, as buyer or seller, newest first."""
+        rows: list[dict] = []
+        for side in ("buyer_id", "seller_id"):
+            response = self._run(
+                self.client.table("conversations").select("*").eq(side, user_id)
+                .order("last_message_at", desc=True).limit(limit)
+            )
+            rows.extend(response.data or [])
+        rows.sort(key=lambda r: str(r.get("last_message_at")), reverse=True)
+        return rows[:limit]
+
+    def update(self, conversation_id: int, changes: dict) -> None:
+        self._run(self.client.table("conversations").update(changes).eq("id", conversation_id))
+
+
+class MessageRepository(Repository):
+    """Messages inside a conversation, in public.messages."""
+
+    def list(self, conversation_id: int, limit: int = 300) -> list[dict]:
+        response = self._run(
+            self.client.table("messages").select("*").eq("conversation_id", conversation_id)
+            .order("created_at").order("id").limit(limit)
+        )
+        return response.data or []
+
+    def add(self, conversation_id: int, sender_id: int, body: str) -> dict:
+        response = self._run(self.client.table("messages").insert(
+            {"conversation_id": conversation_id, "sender_id": sender_id, "body": body}
+        ))
+        if not response.data:
+            raise DatabaseUnavailableError()
+        return response.data[0]
+
+
 class UserRepository(Repository):
     """Reads and adds rows of the public.users table."""
 
     duplicate_error = DuplicateEmailError
+
+    def emails(self, user_ids: list[int]) -> dict[int, str]:
+        """id -> email for the given accounts (for seller and buyer names)."""
+        ids = sorted({int(i) for i in user_ids})
+        if not ids:
+            return {}
+        response = self._run(self.client.table("users").select("id,email").in_("id", ids))
+        return {int(row["id"]): row["email"] for row in response.data or []}
 
     def get(self, user_id: int) -> dict | None:
         response = self._run(
@@ -528,6 +638,26 @@ def get_comparison_repository() -> ComparisonRepository:
 def get_audit_repository() -> AuditRepository:
     """FastAPI dependency for the admin activity log."""
     return AuditRepository(_get_client())
+
+
+def get_listing_repository() -> ListingRepository:
+    """FastAPI dependency for Marketplace listings."""
+    return ListingRepository(_get_client())
+
+
+def get_conversation_repository() -> ConversationRepository:
+    """FastAPI dependency for Marketplace conversations."""
+    return ConversationRepository(_get_client())
+
+
+def get_message_repository() -> MessageRepository:
+    """FastAPI dependency for Marketplace messages."""
+    return MessageRepository(_get_client())
+
+
+def get_listing_photo_store() -> ListingPhotoStore:
+    """FastAPI dependency for Marketplace photos in Supabase Storage."""
+    return ListingPhotoStore(_get_client())
 
 
 def get_image_store() -> ImageStore:

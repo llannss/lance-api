@@ -17,6 +17,7 @@ import activity
 import auth
 import chat
 import favorites
+import market
 import images
 import mailer
 from config import get_settings
@@ -99,6 +100,7 @@ app.add_middleware(
 
 app.include_router(chat.router)
 app.include_router(favorites.router)
+app.include_router(market.router)
 app.include_router(activity.recent_router)
 app.include_router(activity.comparisons_router)
 app.include_router(activity.audit_router)

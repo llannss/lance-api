@@ -16,6 +16,14 @@ from supabase import ClientOptions, create_client
 import auth
 import mailer
 from database import (
+    ConversationRepository,
+    ListingPhotoStore,
+    ListingRepository,
+    MessageRepository,
+    get_conversation_repository,
+    get_listing_photo_store,
+    get_listing_repository,
+    get_message_repository,
     AuditRepository,
     ComparisonRepository,
     RecentRepository,
@@ -131,6 +139,7 @@ class FakeDataAPI:
         # Lower a limit in a test, e.g. {"login-ip": 2}. Keyed by key prefix.
         self.rate_limit_override: dict[str, int] = {}
         self.files: dict[str, bytes] = {}   # the gpu-images Storage bucket
+        self.buckets: dict[str, dict[str, bytes]] = {}   # other buckets, e.g. listing-photos
         self.favorites: list[dict] = []     # the favorites table
         self.clock = 0                      # increasing created_at for favorites
         self.tables: dict[str, list[dict]] = {}   # recently_viewed, saved_comparisons, audit_log
@@ -188,6 +197,9 @@ class FakeDataAPI:
             operator, value = condition.split(".", 1)
             if operator == "eq":
                 rows = [row for row in rows if str(row[column]) == value]
+            elif operator == "in":
+                wanted = set(value.strip("()").split(","))
+                rows = [row for row in rows if str(row[column]) in wanted]
             elif operator == "is" and value == "null":
                 rows = [row for row in rows if row[column] is None]
             else:
@@ -196,7 +208,7 @@ class FakeDataAPI:
 
     @staticmethod
     def pick(rows: list[dict], params) -> list[dict]:
-        if "select" not in params:
+        if "select" not in params or params["select"] == "*":
             return rows
         wanted = params["select"].split(",")
         return [{c: row[c] for c in wanted} for row in rows]
@@ -248,6 +260,17 @@ class FakeDataAPI:
         "recently_viewed": (("user_id", "gpu_id"), False),
         "saved_comparisons": (("user_id", "gpu_a_id", "gpu_b_id"), True),
         "audit_log": ((), True),
+        "listings": ((), True),
+        "conversations": (("listing_id", "buyer_id"), True),
+        "messages": ((), True),
+    }
+
+    # Column defaults from supabase/market.sql (PostgREST returns them on insert)
+    DEFAULTS = {
+        "listings": {"gpu_id": None, "description": "", "currency": "PHP", "location": "",
+                     "photos": [], "status": "active"},
+        "conversations": {"last_sender_id": None, "last_body": "",
+                          "buyer_read_at": None, "seller_read_at": None},
     }
 
     def handle_generic(self, name: str, request: httpx.Request) -> httpx.Response:
@@ -265,8 +288,12 @@ class FakeDataAPI:
                     "message": f'duplicate key value violates unique constraint "{name}_key"',
                 })
             self.clock += 1
-            row = {**new}
+            row = {**self.DEFAULTS.get(name, {}), **new}
             row.setdefault("created_at", f"2026-01-01T00:{self.clock // 60:02d}:{self.clock % 60:02d}+00:00")
+            if name == "listings":
+                row.setdefault("updated_at", row["created_at"])
+            if name == "conversations":
+                row.setdefault("last_message_at", row["created_at"])
             if identity:
                 self.next_ids[name] = self.next_ids.get(name, 0) + 1
                 row["id"] = self.next_ids[name]
@@ -326,19 +353,21 @@ class FakeDataAPI:
 
     def handle_storage(self, request: httpx.Request) -> httpx.Response:
         """Supabase Storage: upload to and delete from the gpu-images bucket."""
-        prefix = "/storage/v1/object/gpu-images"
         path = request.url.path
+        bucket = path.removeprefix("/storage/v1/object/").split("/", 1)[0]
+        prefix = f"/storage/v1/object/{bucket}"
+        files = self.files if bucket == "gpu-images" else self.buckets.setdefault(bucket, {})
         if request.method == "POST" and path.startswith(prefix + "/"):
             name = path[len(prefix) + 1:]
             if self.storage_failure:
                 return httpx.Response(500, json={"statusCode": "500", "error": "InternalError", "message": "boom"})
-            if name in self.files:
+            if name in files:
                 return httpx.Response(409, json={"statusCode": "409", "error": "Duplicate", "message": "exists"})
-            self.files[name] = self.uploaded_bytes(request)
-            return httpx.Response(200, json={"Key": f"gpu-images/{name}", "Id": name})
+            files[name] = self.uploaded_bytes(request)
+            return httpx.Response(200, json={"Key": f"{bucket}/{name}", "Id": name})
         if request.method == "DELETE" and path == prefix:
             names = json.loads(request.content)["prefixes"]
-            removed = [n for n in names if self.files.pop(n, None) is not None]
+            removed = [n for n in names if files.pop(n, None) is not None]
             return httpx.Response(200, json=[{"name": n} for n in removed])
         return httpx.Response(404, json={"statusCode": "404", "error": "not_found", "message": path})
 
@@ -540,6 +569,10 @@ def anonymous(api):
     app.dependency_overrides[get_token_repository] = lambda: TokenRepository(supabase)
     app.dependency_overrides[get_rate_limiter] = lambda: RateLimiter(supabase)
     app.dependency_overrides[get_image_store] = lambda: ImageStore(supabase)
+    app.dependency_overrides[get_listing_repository] = lambda: ListingRepository(supabase)
+    app.dependency_overrides[get_conversation_repository] = lambda: ConversationRepository(supabase)
+    app.dependency_overrides[get_message_repository] = lambda: MessageRepository(supabase)
+    app.dependency_overrides[get_listing_photo_store] = lambda: ListingPhotoStore(supabase)
     app.dependency_overrides[get_favorite_repository] = lambda: FavoriteRepository(supabase)
     app.dependency_overrides[get_recent_repository] = lambda: RecentRepository(supabase)
     app.dependency_overrides[get_comparison_repository] = lambda: ComparisonRepository(supabase)

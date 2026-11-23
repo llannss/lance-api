@@ -32,10 +32,13 @@ class ImageTooLargeError(Exception):
     """The upload is bigger than MAX_UPLOAD_BYTES."""
 
 
-def to_webp(data: bytes, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
+def to_webp(data: bytes, max_bytes: int = MAX_UPLOAD_BYTES, max_side: int = MAX_SIDE, effort: int = 6) -> bytes:
     """Return a cleaned, resized WebP version of an uploaded picture.
 
     max_bytes only differs for local scripts; web uploads keep the 4 MB cap.
+    max_side is larger for Marketplace photos, where detail matters.
+    effort is WebP's speed/size trade-off (0 fast .. 6 smallest); sellers
+    upload several photos at once, so the Marketplace uses a faster setting.
     """
     if len(data) > max_bytes:
         raise ImageTooLargeError()
@@ -52,11 +55,11 @@ def to_webp(data: bytes, max_bytes: int = MAX_UPLOAD_BYTES) -> bytes:
                 probe.verify()                      # structural check of the file
             with Image.open(io.BytesIO(data)) as img:   # verify() needs a fresh open
                 img = ImageOps.exif_transpose(img)  # respect phone rotation, then drop EXIF
-                img.thumbnail((MAX_SIDE, MAX_SIDE))
+                img.thumbnail((max_side, max_side))
                 has_alpha = img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info)
                 img = img.convert("RGBA" if has_alpha else "RGB")
                 out = io.BytesIO()
-                img.save(out, "WEBP", quality=WEBP_QUALITY, method=6)
+                img.save(out, "WEBP", quality=WEBP_QUALITY, method=effort)
                 return out.getvalue()
     except InvalidImageError:
         raise
