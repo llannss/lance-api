@@ -58,6 +58,7 @@ from security import (
     enforce_rate_limit,
     get_current_user,
     require_admin,
+    require_reader,
 )
 
 logger = logging.getLogger("gpu_api")
@@ -467,7 +468,7 @@ def current_account(user: dict = Depends(get_current_user)):
 @app.get(
     "/gpus",
     response_model=GPUList,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_reader)],
     tags=["GPUs"],
 )
 def get_gpus(repository: GPURepository = Depends(get_repository)):
@@ -480,7 +481,7 @@ def get_gpus(repository: GPURepository = Depends(get_repository)):
 @app.get(
     "/gpus/search",
     response_model=GPUSearchResults,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_reader)],
     tags=["GPUs"],
 )
 def search_gpus(
@@ -499,7 +500,7 @@ def search_gpus(
 @app.get(
     "/gpus/{gpu_id}",
     response_model=GPU,
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require_reader)],
     tags=["GPUs"],
 )
 def get_gpu(gpu_id: int = GpuId, repository: GPURepository = Depends(get_repository)):

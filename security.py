@@ -5,13 +5,18 @@ Shared FastAPI dependencies used by index.py and chat.py:
   re-checks the account in the database on every request, so deleted,
   demoted or signed-out accounts lose access immediately.
 - require_admin: allows the request only for the admin role.
+- require_reader: a signed-in account, or another GPU Nexus site's server
+  with a read-only service key. Used only on the GPU read routes.
 - enforce_rate_limit: shared database counters that work on serverless.
 """
+
+import hmac
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 import auth
+from config import get_settings
 from database import RateLimiter, UserRepository, get_user_repository
 
 # The browser keeps the login token in this HttpOnly cookie, which page
@@ -29,6 +34,10 @@ SESSION_COOKIE = "gpu_session"
 CSRF_HEADER = "x-requested-with"
 FETCH_SITE_HEADER = "sec-fetch-site"
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+# Other GPU Nexus sites call the API from their own servers with a key from
+# SERVICE_API_KEYS. The key only ever opens the GPU read routes.
+SERVICE_KEY_HEADER = "x-api-key"
 
 
 def _is_same_site_request(request: Request) -> bool:
@@ -86,6 +95,34 @@ def get_current_user(
     ):
         raise _not_logged_in()
     return account
+
+
+def _is_service_key(key: str) -> bool:
+    """True when key matches one of SERVICE_API_KEYS. Every configured key is
+    compared in constant time, so timing doesn't reveal how close a guess was."""
+    matched = False
+    for valid in get_settings().service_api_keys:
+        if hmac.compare_digest(key.encode(), valid.encode()):
+            matched = True
+    return matched
+
+
+def require_reader(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    users: UserRepository = Depends(get_user_repository),
+) -> dict:
+    """Allow a read of the GPU catalog by a signed-in account, or by another
+    GPU Nexus site's server that sends a valid X-API-Key.
+
+    A wrong key is refused outright rather than falling back to the cookie,
+    so a misconfigured site fails loudly instead of half-working."""
+    key = request.headers.get(SERVICE_KEY_HEADER)
+    if key is not None:
+        if key and _is_service_key(key):
+            return {"service": True}
+        raise HTTPException(status_code=401, detail="Unknown API key.")
+    return get_current_user(request, credentials, users)
 
 
 def require_admin(user: dict = Depends(get_current_user)) -> dict:

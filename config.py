@@ -29,6 +29,9 @@ class Settings:
     gmail_app_password: str
     gemini_api_key: str
     gemini_model: str
+    # Read-only keys for the other GPU Nexus sites' servers (GPU Guessr's
+    # api/gpus.js). Sent as X-API-Key; they can only read the GPU catalog.
+    service_api_keys: tuple[str, ...]
 
 
 def get_settings() -> Settings:
@@ -58,4 +61,9 @@ def get_settings() -> Settings:
         gmail_app_password=os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", ""),
         gemini_api_key=os.getenv("GEMINI_API_KEY", "").strip(),
         gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.1-flash-lite").strip(),
+        service_api_keys=tuple(
+            key.strip()
+            for key in os.getenv("SERVICE_API_KEYS", "").split(",")
+            if key.strip()
+        ),
     )

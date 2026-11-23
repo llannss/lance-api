@@ -112,8 +112,19 @@ python scripts/upload_gpu_images.py ../lance-api-gpu-finder-main/images
 | `GEMINI_API_KEY` | Google AI Studio key for `/chat` |
 | `GEMINI_MODEL` | Gemini model name (default `gemini-3.1-flash-lite`) |
 | `CORS_ORIGINS` | Other browser origins allowed to call the API directly (default: none) |
+| `SERVICE_API_KEYS` | Comma-separated read-only keys for other GPU Nexus sites' servers (default: none) |
 
 On Vercel, set the same names under Settings → Environment Variables.
+
+### Service keys (GPU Guessr and other sites)
+
+Another site's **server** (never its browser code) can read the GPU catalog by
+sending one of the `SERVICE_API_KEYS` in an `X-API-Key` header. A key opens only
+`GET /gpus`, `GET /gpus/search` and `GET /gpus/{id}`. It can't change GPUs, and
+it isn't an account (no favorites, profile or admin). A wrong key gets 401.
+
+GPU Guessr's `api/gpus.js` sends its own `GPU_API_KEY` environment variable as
+this header, so give it the same value as one entry in `SERVICE_API_KEYS`.
 
 ## Tests
 

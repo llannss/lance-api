@@ -368,10 +368,55 @@ def test_invalid_tokens_are_rejected(anonymous, api):
     assert api.requests == []
 
 
-def test_legacy_api_key_no_longer_works(anonymous, api):
-    assert anonymous.get("/gpus", headers={"x-api-key": "apinilance"}).status_code == 401
-    assert anonymous.post("/gpus", json=make_gpu(), headers={"x-api-key": "apinilance"}).status_code == 401
+SERVICE_KEY = "test-service-key-for-gpu-guessr-0123456789"
+
+
+@pytest.fixture
+def service_keys(monkeypatch):
+    """Two configured read-only keys, the way Vercel would hold them."""
+    monkeypatch.setenv("SERVICE_API_KEYS", f"other-site-key, {SERVICE_KEY}")
+
+
+def test_unknown_api_key_is_refused(anonymous, api, service_keys):
+    for key in ("apinilance", "", SERVICE_KEY + "x"):
+        response = anonymous.get("/gpus", headers={"x-api-key": key})
+        assert response.status_code == 401
     assert api.requests == []
+
+
+def test_api_key_is_refused_when_none_are_configured(anonymous, api, monkeypatch):
+    monkeypatch.setenv("SERVICE_API_KEYS", "")
+    assert anonymous.get("/gpus", headers={"x-api-key": SERVICE_KEY}).status_code == 401
+    assert api.requests == []
+
+
+def test_service_key_can_read_the_gpu_catalog(anonymous, service_keys):
+    key = {"x-api-key": SERVICE_KEY}
+    listing = anonymous.get("/gpus", headers=key)
+    assert listing.status_code == 200
+    assert listing.json()["count"] == 3
+    assert anonymous.get("/gpus/1", headers=key).status_code == 200
+    assert anonymous.get("/gpus/search", params={"q": "rtx"}, headers=key).status_code == 200
+    # every configured key works, and spaces around the commas are ignored
+    assert anonymous.get("/gpus", headers={"x-api-key": "other-site-key"}).status_code == 200
+
+
+def test_service_key_cannot_change_anything(anonymous, api, service_keys):
+    key = {"x-api-key": SERVICE_KEY}
+    assert anonymous.post("/gpus", json=make_gpu(), headers=key).status_code == 401
+    assert anonymous.put("/gpus/1", json=make_gpu(description="Hacked."), headers=key).status_code == 401
+    assert anonymous.delete("/gpus/1", headers=key).status_code == 401
+    assert anonymous.get("/gpus/1", headers=key).json()["description"] == "NVIDIA's flagship GeForce graphics card."
+
+
+def test_service_key_is_not_an_account(anonymous, service_keys):
+    key = {"x-api-key": SERVICE_KEY}
+    for path in ("/auth/me", "/me/favorites", "/me/recent", "/admin/audit"):
+        assert anonymous.get(path, headers=key).status_code == 401, path
+
+
+def test_signed_in_users_still_read_without_a_key(client, service_keys):
+    assert client.get("/gpus").status_code == 200
 
 
 def test_rejected_writes_change_nothing(client):
